@@ -95,6 +95,8 @@ import {
   deleteShare,
   listSharedWithMe,
   ShareItem,
+  searchSharees,
+  ShareeItem,
   listNCUsers,
   createNCUser,
   deleteNCUser,
@@ -351,6 +353,7 @@ export default function App() {
   const [sharePassword, setSharePassword] = useState('');
   const [shareExpireDate, setShareExpireDate] = useState('');
   const [shareWithUser, setShareWithUser] = useState('');
+  const [shareesList, setShareesList] = useState<ShareeItem[]>([]);
   const [copiedShareId, setCopiedShareId] = useState<string | null>(null);
   const [creatingShare, setCreatingShare] = useState(false);
 
@@ -772,12 +775,16 @@ export default function App() {
     setShareWithUser('');
     setCopiedShareId(null);
 
-    const existingShares = await listSharesForPath(item.relPath);
+    const [existingShares, sharees] = await Promise.all([
+      listSharesForPath(item.relPath),
+      searchSharees(''),
+    ]);
     setShareModal((prev) => ({
       ...prev,
       shares: existingShares,
       loading: false,
     }));
+    setShareesList(sharees);
   };
 
   const handleCreatePublicShareLink = async () => {
@@ -791,7 +798,14 @@ export default function App() {
 
     setCreatingShare(false);
     if (res.ok && res.share) {
-      addToast('success', 'Public share link created!');
+      if (res.share.url) {
+        const fullUrl = res.share.url.startsWith('http') ? res.share.url : `${window.location.origin}${res.share.url}`;
+        navigator.clipboard.writeText(fullUrl).catch(() => {});
+        setCopiedShareId(res.share.id);
+        addToast('success', 'Public share link created and copied to clipboard!');
+      } else {
+        addToast('success', 'Public share link created!');
+      }
       setShareModal((prev) => ({
         ...prev,
         shares: [...prev.shares, res.share!],
@@ -2982,16 +2996,51 @@ export default function App() {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
                     type="text"
-                    placeholder="Enter username (e.g. govindvaghasia)"
+                    list="sharees-datalist"
+                    placeholder="Search or select user / group"
                     value={shareWithUser}
                     onChange={(e) => setShareWithUser(e.target.value)}
                     style={{ flex: 1 }}
                   />
+                  <datalist id="sharees-datalist">
+                    {shareesList.map((s) => (
+                      <option key={`${s.value.shareType}_${s.value.shareWith}`} value={s.value.shareWith}>
+                        {s.label}
+                      </option>
+                    ))}
+                  </datalist>
                   <button type="submit" className="btn btn-primary">
                     <UserPlus size={14} />
                     <span>Share</span>
                   </button>
                 </div>
+
+                {/* Quick Add User Chips */}
+                {shareesList.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 8 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-sub)', marginRight: 2 }}>Users:</span>
+                    {shareesList
+                      .filter((s) => s.value.shareWith !== user?.username)
+                      .map((s) => (
+                        <button
+                          key={s.value.shareWith}
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{
+                            padding: '2px 8px',
+                            fontSize: 11,
+                            borderRadius: 'var(--r-full)',
+                            background: shareWithUser === s.value.shareWith ? 'var(--primary-blue-light)' : 'var(--border-light)',
+                            color: shareWithUser === s.value.shareWith ? 'var(--primary-blue)' : 'var(--text-main)',
+                            fontWeight: shareWithUser === s.value.shareWith ? 600 : 400,
+                          }}
+                          onClick={() => setShareWithUser(s.value.shareWith)}
+                        >
+                          {s.label}
+                        </button>
+                      ))}
+                  </div>
+                )}
               </form>
 
               {/* Active Shares List */}

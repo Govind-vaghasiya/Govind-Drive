@@ -1032,6 +1032,49 @@ export async function createUserShare(
   }
 }
 
+export interface ShareeItem {
+  value: {
+    shareType: number;
+    shareWith: string;
+  };
+  label: string;
+}
+
+export async function searchSharees(query = ''): Promise<ShareeItem[]> {
+  const session = loadSession();
+  if (!session) return [];
+
+  const url = `/ocs/v1.php/apps/files_sharing/api/v1/sharees?format=json&search=${encodeURIComponent(query)}&itemType=file&perPage=50`;
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        ...authHeaders(session.loginName, session.password),
+        'OCS-APIRequest': 'true',
+        Accept: 'application/json',
+      },
+    });
+
+    if (!res.ok) return [];
+    const json = await res.json();
+    const exact = json?.ocs?.data?.exact?.users || [];
+    const users = json?.ocs?.data?.users || [];
+    const groups = json?.ocs?.data?.groups || [];
+
+    const all = [...exact, ...users, ...groups];
+    return all.map((item: any) => ({
+      value: {
+        shareType: item.value?.shareType ?? 0,
+        shareWith: item.value?.shareWith ?? item.label,
+      },
+      label: item.label,
+    }));
+  } catch (err) {
+    console.error('[nc] searchSharees error:', err);
+    return [];
+  }
+}
+
 export async function deleteShare(shareId: string): Promise<{ ok: boolean; error?: string }> {
   const session = loadSession();
   if (!session) return { ok: false, error: 'Not logged in' };
