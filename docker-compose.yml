@@ -1,35 +1,17 @@
 version: '3.8'
 
 services:
-  pocketbase:
-    image: ghcr.io/muchoke/pocketbase:latest
-    container_name: govind_pocketbase
+  govind-drive:
+    image: nginx:alpine
+    container_name: govind-drive-web
     restart: unless-stopped
-    command:
-      - --encryptionEnv
-      - PB_ENCRYPTION_KEY
     ports:
-      - "8090:8090"
-    environment:
-      - PB_ENCRYPTION_KEY=govind_secret_encryption_key_change_me
+      - "8765:80"
     volumes:
-      - ./pb_data:/pb_data
-      - ./pb_public:/pb_public
-      - ./pb_migrations:/pb_migrations
+      - ./dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Optional: Production build serve of React App
-  govind_app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: govind_web
-    restart: unless-stopped
-    ports:
-      - "3000:80"
-    depends_on:
-      - pocketbase
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

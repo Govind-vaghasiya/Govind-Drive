@@ -22,9 +22,9 @@ web_modules/
 # Optional eslint cache
 .eslintcache
 
-# Output of 'npm run build'
-dist/
-build/
+# Storage / Backend dynamic runtime files
+.ocdata
+storage_config.json
 
 # macOS / OS system files
 .DS_Store

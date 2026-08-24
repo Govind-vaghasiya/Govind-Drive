@@ -1,1368 +1,3293 @@
-import { useMemo, useState, useRef, useEffect } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
-  Menu,
-  Search,
-  LayoutGrid,
-  List,
-  ChevronRight,
-  ChevronDown,
-  Check,
-  Bell,
-  Settings,
-  Upload,
-  Clock,
-  Star,
-  FolderPlus,
+  Folder,
   FileText,
   FileSpreadsheet,
-  Presentation,
-  PanelRightOpen,
-  PanelRightClose,
-  SortAsc,
-  X,
+  FileCode,
+  FileArchive,
+  Image as ImageIcon,
+  Film,
+  Music,
+  File as FileGeneric,
+  Search,
+  Grid,
+  List as ListIcon,
+  Upload,
+  FolderPlus,
+  Plus,
+  RefreshCw,
+  MoreVertical,
+  Download,
+  Trash2,
+  Edit2,
+  Star,
+  Eye,
   LogOut,
+  HardDrive,
+  Check,
+  X,
+  ChevronRight,
+  Home,
+  ShieldCheck,
+  Lock,
+  User as UserIcon,
+  AlertCircle,
+  Clock,
+  Sparkles,
+  ExternalLink,
+  Users,
+  Info,
+  UserPlus,
+  ChevronDown,
+  Activity,
+  ArrowUpDown,
+  RotateCcw,
+  Play,
+  Share2,
+  Copy,
+  CheckCircle2,
+  Moon,
+  Sun,
+  History,
+  FileBarChart,
+  FolderDown,
+  Globe,
+  Settings,
   Shield,
-  FolderOpen,
-  Filter,
-} from "lucide-react";
-import Sidebar from "./cloud/Sidebar";
-import ActivityFeed from "./cloud/ActivityFeed";
-import FileCard from "./cloud/FileCard";
-import FolderCard from "./cloud/FolderCard";
-import FileRow from "./cloud/FileRow";
-import BatchActionBar from "./cloud/BatchActionBar";
-import StorageAnalyticsModal from "./cloud/StorageAnalyticsModal";
-import GoogleDriveFilters from "./cloud/GoogleDriveFilters";
-import ContextMenu from "./cloud/ContextMenu";
-import BottomNav from "./cloud/BottomNav";
-import LoginModal from "./cloud/LoginModal";
-import AdminUserModal from "./cloud/AdminUserModal";
-import UserProfileModal from "./cloud/UserProfileModal";
-import ShareModal from "./cloud/ShareModal";
-import FilePreviewModal from "./cloud/FilePreviewModal";
-import FileEditorModal from "./cloud/FileEditorModal";
-import DocEditorModal from "./cloud/DocEditorModal";
-import SheetEditorModal from "./cloud/SheetEditorModal";
-import PdfEditorModal from "./cloud/PdfEditorModal";
-import MoveModal from "./cloud/MoveModal";
-import CanvasContextMenu from "./cloud/CanvasContextMenu";
-import UploadProgressWidget from "./cloud/UploadProgressWidget";
+  Calendar,
+  FolderInput,
+  Files,
+} from 'lucide-react';
+
+import logoImg from './assets/logo.png';
+import logoIconImg from './assets/logo-icon.png';
+
 import {
-  defaultFolders,
-  defaultFiles,
-  activities as defaultActivities,
-  type DriveItem,
-  type FileKind,
-  type ActivityEntry,
-} from "./cloud/data";
-import { UserProfile, uploadFileToPocketBase, pb } from "./lib/pocketbase";
-import {
-  fetchDiskItems,
-  createDiskFolder,
-  uploadDiskFiles,
-  renameDiskItem,
-  moveDiskItem,
-  deleteDiskItem,
-  getDiskDownloadUrl,
-  DiskItem,
-} from "./lib/serverApi";
+  NCUser,
+  FileItem,
+  FileKind,
+  TrashItem,
+  NC_HOST,
+  ncLogin,
+  getCurrentUser,
+  ncLogout,
+  listFiles,
+  createFolder,
+  createOfficeDocument,
+  moveItem,
+  copyItem,
+  uploadFiles,
+  deleteItem,
+  renameItem,
+  downloadFile,
+  fetchBlob,
+  getStorageInfo,
+  listTrash,
+  restoreTrashItem,
+  deleteTrashItem,
+  emptyTrash,
+  getUserAvatarUrl,
+  listActivities,
+  ActivityItem,
+  listSharesForPath,
+  createPublicShare,
+  createUserShare,
+  deleteShare,
+  listSharedWithMe,
+  ShareItem,
+  listNCUsers,
+  createNCUser,
+  deleteNCUser,
+  NCProvisionedUser,
+} from './lib/nc';
 
-type View = "grid" | "list";
-type SortKey = "name" | "date" | "size" | "kind" | "type";
+// Caches for media thumbnails
+const imageThumbnailCache = new Map<string, string>();
+const videoThumbnailCache = new Map<string, string>();
 
-const navLabels: Record<string, string> = {
-  "my-drive": "My Drive",
-  recent: "Recent",
-  starred: "Starred",
-  shared: "Shared with me",
-  trash: "Trash",
-};
+async function generateVideoThumbnail(blobUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.src = blobUrl;
+    video.muted = true;
+    video.playsInline = true;
+    video.crossOrigin = 'anonymous';
 
-let idCounter = Date.now();
-const newId = () => `f_${idCounter++}`;
+    let done = false;
+    const cleanUp = () => {
+      done = true;
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    };
 
-export default function App() {
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    const savedUser = localStorage.getItem("govind_drive_user") || localStorage.getItem("aurora_drive_user");
-    if (savedUser) {
+    video.onloadeddata = () => {
+      video.currentTime = Math.min(1.5, Math.max(0.1, video.duration ? video.duration / 4 : 0.5));
+    };
+
+    video.onseeked = () => {
+      if (done) return;
       try {
-        const parsed: UserProfile = JSON.parse(savedUser);
-        // Enforce 30-day session expiry
-        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-        const sessionAge = Date.now() - (parsed.sessionCreatedAt || 0);
-        if (parsed.sessionCreatedAt && sessionAge > THIRTY_DAYS_MS) {
-          // Session expired — clear it and require fresh login
-          localStorage.removeItem('govind_drive_user');
-          localStorage.removeItem('aurora_drive_user');
-          console.info('🔒 Session expired after 30 days — please log in again.');
-          return null;
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 320;
+        canvas.height = video.videoHeight || 180;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          cleanUp();
+          resolve(dataUrl);
+        } else {
+          cleanUp();
+          reject(new Error('No 2d context'));
         }
-        return parsed;
-      } catch { }
-    }
-    return null; // No saved session — show login screen
+      } catch (err) {
+        cleanUp();
+        reject(err);
+      }
+    };
+
+    video.onerror = () => {
+      cleanUp();
+      reject(new Error('Video error'));
+    };
+
+    setTimeout(() => {
+      if (!done) {
+        cleanUp();
+        reject(new Error('Video timeout'));
+      }
+    }, 7000);
   });
+}
 
-  const [adminModalOpen, setAdminModalOpen] = useState(false);
-  const [storageModalOpen, setStorageModalOpen] = useState(false);
-  const [shareItem, setShareItem] = useState<DriveItem | null>(null);
-  const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
-  const [editItem, setEditItem] = useState<DriveItem | null>(null);
-  const [moveItem, setMoveItem] = useState<DriveItem | null>(null);
-  const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number } | null>(null);
-  const [targetUploadFolder, setTargetUploadFolder] = useState<string | null>(null);
-  const [uploadState, setUploadState] = useState<{
-    uploading: boolean;
-    fileName: string;
-    count: number;
-    progress: number;
-    completed: boolean;
-    error?: string;
-  } | null>(null);
+// ---------------------------------------------------------------------------
+// Helper: format bytes
+// ---------------------------------------------------------------------------
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 4);
+  return `${parseFloat((bytes / Math.pow(1024, i)).toFixed(1))} ${units[i]}`;
+}
 
-  const [kindFilter, setKindFilter] = useState<string>("all");
-  const [dateFilter, setDateFilter] = useState<string>("any");
-  const [peopleFilter, setPeopleFilter] = useState<string>("anyone");
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+// ---------------------------------------------------------------------------
+// Toast Notification Type
+// ---------------------------------------------------------------------------
+interface Toast {
+  id: string;
+  type: 'success' | 'error' | 'info';
+  message: string;
+}
 
-  const handleToggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+// ---------------------------------------------------------------------------
+// Professional User Avatar Component
+// ---------------------------------------------------------------------------
+function UserAvatar({
+  username,
+  displayName,
+  size = 32,
+  className = '',
+}: {
+  username: string;
+  displayName: string;
+  size?: number;
+  className?: string;
+}) {
+  const [imgError, setImgError] = useState(false);
+  const avatarUrl = getUserAvatarUrl(username, size * 2);
 
+  const initials = useMemo(() => {
+    if (!displayName) return 'GD';
+    const parts = displayName.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+    }
+    return displayName.slice(0, 2).toUpperCase();
+  }, [displayName]);
 
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activityOpen, setActivityOpen] = useState(false);
-  const [activityPinned, setActivityPinned] = useState(true);
-  const [active, setActive] = useState("my-drive");
-  const [view, setView] = useState<View>("grid");
-  const [sort, setSort] = useState<SortKey>("date");
-  const [sortOpen, setSortOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [menu, setMenu] = useState<{ x: number; y: number; item: DriveItem } | null>(null);
-  const [newOpen, setNewOpen] = useState(false);
+  return (
+    <div
+      className={className}
+      style={{
+        width: size,
+        height: size,
+        minWidth: size,
+        minHeight: size,
+        borderRadius: '50%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'linear-gradient(135deg, #0b57d0 0%, #4338ca 100%)',
+        color: '#ffffff',
+        fontWeight: 700,
+        fontSize: Math.max(10, Math.floor(size * 0.38)),
+        letterSpacing: '0.5px',
+        overflow: 'hidden',
+        position: 'relative',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+        border: '1.5px solid rgba(255,255,255,0.85)',
+        flexShrink: 0,
+      }}
+    >
+      {!imgError ? (
+        <img
+          src={avatarUrl}
+          alt={displayName}
+          onError={() => setImgError(true)}
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        />
+      ) : (
+        <span>{initials}</span>
+      )}
+    </div>
+  );
+}
 
-  // Per-user storage keys — prevents data mixing between users
-  const userStorageKey = (base: string) => {
-    const uid = currentUser?.email?.replace(/[^a-z0-9]/gi, '_') || 'default';
-    return `${base}_${uid}`;
-  };
+// ---------------------------------------------------------------------------
+// Main Application Component
+// ---------------------------------------------------------------------------
+export default function App() {
+  // Auth state
+  const [user, setUser] = useState<NCUser | null>(() => getCurrentUser());
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
 
-  const [activityList, setActivityList] = useState<ActivityEntry[]>(() => {
-    // Try per-user key first, then global fallback for migration
-    const uid = (() => {
-      const u = localStorage.getItem('govind_drive_user') || localStorage.getItem('aurora_drive_user');
-      if (u) { try { const p = JSON.parse(u); return (p.email || '').replace(/[^a-z0-9]/gi, '_'); } catch {} }
-      return 'default';
-    })();
-    const perUserKey = `govind_drive_activities_${uid}`;
-    const saved = localStorage.getItem(perUserKey);
-    if (saved) { try { return JSON.parse(saved); } catch {} }
-    return [];
+  // Theme state
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    return localStorage.getItem('gd_theme') === 'dark';
   });
 
   useEffect(() => {
-    localStorage.setItem(userStorageKey('govind_drive_activities'), JSON.stringify(activityList));
-  }, [activityList, currentUser]);
+    if (isDarkMode) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      localStorage.setItem('gd_theme', 'dark');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+      localStorage.setItem('gd_theme', 'light');
+    }
+  }, [isDarkMode]);
 
-  const addActivityRecord = (action: string, target: string) => {
-    const ts = Date.now();
-    const newEntry: ActivityEntry = {
-      id: `act_${ts}_${Math.random()}`,
-      user: currentUser?.name || "You",
-      avatarColor: "bg-blue-600",
-      avatar: currentUser?.avatar || undefined,
-      action,
-      target,
-      time: "Just now",
-      timestamp: ts,
-    };
-    setActivityList((prev) => [newEntry, ...prev]);
-  };
+  // File explorer state
+  const [currentPath, setCurrentPath] = useState<string>('');
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [loadingFiles, setLoadingFiles] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'mydrive' | 'recent' | 'starred' | 'shared' | 'trash'>('mydrive');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [showActivity, setShowActivity] = useState<boolean>(true);
+  const [activityTab, setActivityTab] = useState<'details' | 'activity'>('details');
 
-  // Folder subpath tracking for disk navigation (e.g. "", "Projects", "Projects/Design")
-  const [folderSubpath, setFolderSubpath] = useState("");
+  // Selected item inspector for Details tab
+  const [selectedItem, setSelectedItem] = useState<FileItem | null>(null);
 
-  const [items, setItems] = useState<DriveItem[]>(() => {
-    // Load from per-user key — each user has their own isolated item list
-    const uid = (() => {
-      const u = localStorage.getItem('govind_drive_user') || localStorage.getItem('aurora_drive_user');
-      if (u) { try { const p = JSON.parse(u); return (p.email || '').replace(/[^a-z0-9]/gi, '_'); } catch {} }
-      return 'default';
-    })();
-    const perUserKey = `govind_drive_items_${uid}`;
-    const savedItems = localStorage.getItem(perUserKey);
-    if (savedItems) { try { return JSON.parse(savedItems); } catch {} }
-    return []; // Start empty — disk refresh will populate
-  });
+  // Drag and drop for moving files/folders into each other
+  const [draggedItem, setDraggedItem] = useState<FileItem | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
 
-  const [renaming, setRenaming] = useState<string | null>(null);
-  const [currentFolder, setCurrentFolder] = useState<string | null>(null);
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
-
-  // Marquee Drag Box Selection State
-  const [selectionBox, setSelectionBox] = useState<{
+  // Marquee Selection (Click and Drag Box to select multiple items)
+  const [marquee, setMarquee] = useState<{
     startX: number;
     startY: number;
     currentX: number;
     currentY: number;
   } | null>(null);
-  const mainRef = useRef<HTMLDivElement>(null);
 
+  // Filters & Sorting Dropdowns
+  const [typeFilter, setTypeFilter] = useState<'all' | 'folders' | 'doc' | 'sheet' | 'slides' | 'video' | 'image' | 'pdf'>('all');
+  const [dateFilter, setDateFilter] = useState<'anytime' | 'today' | '7days' | '30days' | 'year'>('anytime');
+  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'name_asc' | 'name_desc' | 'size_desc'>('name_asc');
+
+  const [openDropdown, setOpenDropdown] = useState<'type' | 'date' | 'people' | 'sort' | 'new' | null>(null);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+
+  // Starred / Favorites local store
+  const [starredIds, setStarredIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem('gd_starred');
+      return saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  // Selection state
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+
+  // Storage info
+  const [storageInfo, setStorageInfo] = useState<{ used: number; total: number }>({
+    used: user?.storageUsed || 0,
+    total: user?.storageTotal || 0,
+  });
+
+  // Trash state
+  const [trashItems, setTrashItems] = useState<TrashItem[]>([]);
+  const [loadingTrash, setLoadingTrash] = useState(false);
+  const [emptyTrashConfirm, setEmptyTrashConfirm] = useState(false);
+
+  // Activities state
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [loadingActivities, setLoadingActivities] = useState(false);
+
+  // Shared With Me state
+  const [sharedWithMeFiles, setSharedWithMeFiles] = useState<FileItem[]>([]);
+  const [loadingSharedWithMe, setLoadingSharedWithMe] = useState(false);
+
+  // Sharing Modal state
+  const [shareModal, setShareModal] = useState<{
+    open: boolean;
+    item: FileItem | null;
+    shares: ShareItem[];
+    loading: boolean;
+  }>({
+    open: false,
+    item: null,
+    shares: [],
+    loading: false,
+  });
+  const [sharePassword, setSharePassword] = useState('');
+  const [shareExpireDate, setShareExpireDate] = useState('');
+  const [shareWithUser, setShareWithUser] = useState('');
+  const [copiedShareId, setCopiedShareId] = useState<string | null>(null);
+  const [creatingShare, setCreatingShare] = useState(false);
+
+  // Admin User Management state (Phase 4.7)
+  const [adminUsersModalOpen, setAdminUsersModalOpen] = useState(false);
+  const [adminUsersList, setAdminUsersList] = useState<NCProvisionedUser[]>([]);
+  const [loadingAdminUsers, setLoadingAdminUsers] = useState(false);
+  const [newAdminUserId, setNewAdminUserId] = useState('');
+  const [newAdminUserPass, setNewAdminUserPass] = useState('');
+  const [newAdminUserDisplay, setNewAdminUserDisplay] = useState('');
+
+  // Move / Copy Destination Picker Modal
+  const [moveCopyModal, setMoveCopyModal] = useState<{
+    open: boolean;
+    mode: 'move' | 'copy';
+    items: FileItem[];
+    selectedDestPath: string;
+  } | null>(null);
+
+  // Modals
+  const [newFolderModalOpen, setNewFolderModalOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+
+  const [newDocModal, setNewDocModal] = useState<{
+    open: boolean;
+    type: 'doc' | 'sheet' | 'slides' | 'text';
+    title: string;
+    ext: string;
+  }>({
+    open: false,
+    type: 'doc',
+    title: 'New Document',
+    ext: '.docx',
+  });
+  const [newDocName, setNewDocName] = useState('');
+  const [creatingDoc, setCreatingDoc] = useState(false);
+
+  // Rename & Delete
+  const [renameTarget, setRenameTarget] = useState<FileItem | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deleteTargets, setDeleteTargets] = useState<FileItem[]>([]);
+
+  // Preview & OnlyOffice
+  const [previewTarget, setPreviewTarget] = useState<FileItem | null>(null);
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+
+  const [onlyOfficeModal, setOnlyOfficeModal] = useState<{
+    open: boolean;
+    url: string;
+    name: string;
+    item: FileItem;
+  } | null>(null);
+
+  // Context menu
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    item: FileItem;
+  } | null>(null);
+
+  // Upload widget
+  const [uploadState, setUploadState] = useState<{
+    uploading: boolean;
+    fileName: string;
+    progress: number;
+    totalFiles: number;
+    completed: boolean;
+    error?: string;
+  } | null>(null);
+
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+  // -------------------------------------------------------------------------
+  // Toast Helper
+  // -------------------------------------------------------------------------
+  const addToast = useCallback((type: 'success' | 'error' | 'info', message: string) => {
+    const id = `toast_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    setToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // Star toggle
+  // -------------------------------------------------------------------------
+  const toggleStar = useCallback((relPath: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setStarredIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(relPath)) next.delete(relPath);
+      else next.add(relPath);
+      localStorage.setItem('gd_starred', JSON.stringify(Array.from(next)));
+      return next;
+    });
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // Load Files, Trash, Activities & Shares
+  // -------------------------------------------------------------------------
+  const refreshFiles = useCallback(async (path = currentPath) => {
+    if (!user) return;
+    setLoadingFiles(true);
+    try {
+      const items = await listFiles(path);
+      setFiles(items);
+      if (items.length > 0) {
+        setSelectedItem((prev) => (prev ? items.find((f) => f.relPath === prev.relPath) || items[0] : items[0]));
+      }
+    } catch (err) {
+      console.error('Failed to list files:', err);
+      addToast('error', 'Failed to load folder contents.');
+    } finally {
+      setLoadingFiles(false);
+    }
+  }, [user, currentPath, addToast]);
+
+  const refreshTrash = useCallback(async () => {
+    if (!user) return;
+    setLoadingTrash(true);
+    try {
+      const items = await listTrash();
+      setTrashItems(items);
+    } catch (err) {
+      console.error('Failed to list trash:', err);
+      addToast('error', 'Failed to load trashbin.');
+    } finally {
+      setLoadingTrash(false);
+    }
+  }, [user, addToast]);
+
+  const refreshActivities = useCallback(async () => {
+    if (!user) return;
+    setLoadingActivities(true);
+    try {
+      const acts = await listActivities(40);
+      setActivities(acts);
+    } catch (err) {
+      console.error('Failed to list activities:', err);
+    } finally {
+      setLoadingActivities(false);
+    }
+  }, [user]);
+
+  const refreshSharedWithMe = useCallback(async () => {
+    if (!user) return;
+    setLoadingSharedWithMe(true);
+    try {
+      const sharedItems = await listSharedWithMe();
+      setSharedWithMeFiles(sharedItems);
+    } catch (err) {
+      console.error('Failed to list shared items:', err);
+      addToast('error', 'Failed to load shared items.');
+    } finally {
+      setLoadingSharedWithMe(false);
+    }
+  }, [user, addToast]);
+
+  const refreshStorage = useCallback(async () => {
+    if (!user) return;
+    const q = await getStorageInfo();
+    if (q) setStorageInfo(q);
+  }, [user]);
+
+  const refreshAdminUsers = useCallback(async () => {
+    if (!user?.isAdmin) return;
+    setLoadingAdminUsers(true);
+    const uList = await listNCUsers();
+    setAdminUsersList(uList);
+    setLoadingAdminUsers(false);
+  }, [user]);
+
+  useEffect(() => {
+    if (user) {
+      if (activeTab === 'trash') {
+        refreshTrash();
+      } else if (activeTab === 'shared') {
+        refreshSharedWithMe();
+      } else {
+        refreshFiles(currentPath);
+      }
+      refreshStorage();
+      setSelectedPaths(new Set());
+    }
+  }, [user, currentPath, activeTab, refreshFiles, refreshTrash, refreshSharedWithMe, refreshStorage]);
+
+  useEffect(() => {
+    if (user && showActivity) {
+      refreshActivities();
+    }
+  }, [user, showActivity, refreshActivities]);
+
+  // Trash actions
+  const handleRestore = async (trashId: string, name: string) => {
+    const res = await restoreTrashItem(trashId);
+    if (res.ok) {
+      addToast('success', `Restored "${name}" to Drive`);
+      refreshTrash();
+      refreshStorage();
+      refreshActivities();
+    } else {
+      addToast('error', res.error || 'Failed to restore item.');
+    }
+  };
+
+  const handleDeletePermanently = async (trashId: string, name: string) => {
+    const res = await deleteTrashItem(trashId);
+    if (res.ok) {
+      addToast('success', `Permanently deleted "${name}"`);
+      refreshTrash();
+      refreshStorage();
+    } else {
+      addToast('error', res.error || 'Failed to delete item.');
+    }
+  };
+
+  const handleEmptyTrash = async () => {
+    const res = await emptyTrash();
+    if (res.ok) {
+      addToast('success', 'Emptied Trash');
+      setEmptyTrashConfirm(false);
+      refreshTrash();
+      refreshStorage();
+    } else {
+      addToast('error', res.error || 'Failed to empty trash.');
+    }
+  };
+
+  // Keyboard Delete / Backspace listener & Escape listener
+  useEffect(() => {
+    const handleGlobalClick = () => {
+      setOpenDropdown(null);
+      setContextMenu(null);
+      setShowProfileMenu(false);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const activeTag = (document.activeElement?.tagName || '').toLowerCase();
+      if (activeTag === 'input' || activeTag === 'textarea') return;
+
+      if (e.key === 'Escape') {
+        setOpenDropdown(null);
+        setContextMenu(null);
+        setShowProfileMenu(false);
+        setNewFolderModalOpen(false);
+        setNewDocModal((p) => ({ ...p, open: false }));
+        setRenameTarget(null);
+        setDeleteTargets([]);
+        setEmptyTrashConfirm(false);
+        setShareModal((p) => ({ ...p, open: false }));
+        setAdminUsersModalOpen(false);
+        setMoveCopyModal(null);
+        closePreview();
+      }
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedPaths.size > 0 && activeTab !== 'trash') {
+          const targets = files.filter((f) => selectedPaths.has(f.relPath));
+          if (targets.length > 0) {
+            setDeleteTargets(targets);
+          }
+        }
+      }
+    };
+
+    window.addEventListener('click', handleGlobalClick);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('click', handleGlobalClick);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedPaths, files, activeTab]);
+
+  // -------------------------------------------------------------------------
+  // Marquee Selection Logic (Click and Drag to select multiple items)
+  // -------------------------------------------------------------------------
   const handleMouseDownCanvas = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Only trigger marquee on left click on the background canvas
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    if (target.closest('button') || target.closest('input') || target.closest('a')) return;
+    if (target.closest('.file-card-tile') || target.closest('.folder-chip') || target.closest('button') || target.closest('input')) {
+      return;
+    }
 
-    setSelectionBox({
+    // Deselect if not holding Ctrl/Cmd
+    if (!e.ctrlKey && !e.metaKey) {
+      setSelectedPaths(new Set());
+    }
+
+    setMarquee({
       startX: e.clientX,
       startY: e.clientY,
       currentX: e.clientX,
       currentY: e.clientY,
     });
-
-    if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
-      if (!target.closest('[data-item-id]')) {
-        setSelectedIds(new Set());
-      }
-    }
   };
 
-  const handleMouseMoveCanvas = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!selectionBox) return;
-
-    const currentX = e.clientX;
-    const currentY = e.clientY;
-    setSelectionBox((prev) => (prev ? { ...prev, currentX, currentY } : null));
-
-    const left = Math.min(selectionBox.startX, currentX);
-    const top = Math.min(selectionBox.startY, currentY);
-    const right = Math.max(selectionBox.startX, currentX);
-    const bottom = Math.max(selectionBox.startY, currentY);
-
-    const cardElements = mainRef.current?.querySelectorAll<HTMLElement>('[data-item-id]');
-    const newlySelected = new Set(e.shiftKey || e.ctrlKey || e.metaKey ? selectedIds : []);
-
-    cardElements?.forEach((el) => {
-      const rect = el.getBoundingClientRect();
-      const itemId = el.getAttribute('data-item-id');
-      if (!itemId) return;
-
-      const isIntersecting = !(
-        rect.right < left ||
-        rect.left > right ||
-        rect.bottom < top ||
-        rect.top > bottom
-      );
-
-      if (isIntersecting) {
-        newlySelected.add(itemId);
-      }
-    });
-
-    setSelectedIds(newlySelected);
-  };
-
-  const handleMouseUpCanvas = () => {
-    if (selectionBox) {
-      setSelectionBox(null);
-    }
-  };
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
-
-  // Resolve the stable disk folder key for a user.
-  // The folderId is tied to user.id — immutable, never changes even if name or email changes.
-  // For legacy/admin users, falls back to email-derived key for backward compatibility.
-  const getDiskUserId = (user: typeof currentUser): string => {
-    if (!user) return 'admin_govind_home';
-    // folderId is the single source of truth — set once, never changes
-    if (user.folderId) return user.folderId;
-    // Legacy fallback: derive from email (existing users on disk)
-    return user.email.toLowerCase().replace(/[^a-z0-9_@.-]/g, '_').replace(/[@.]/g, '_');
-  };
-
-  // Function to refresh items directly from disk for the current user
-  // Explicitly passes the userId — no localStorage dependency, no race conditions
-  const refreshFromDisk = async (subpath: string = folderSubpath, user: typeof currentUser = currentUser) => {
-    const userId = getDiskUserId(user);
-    const { items: diskItems } = await fetchDiskItems(subpath, userId);
-    if (Array.isArray(diskItems)) {
-      const converted: DriveItem[] = diskItems.map((d: DiskItem) => ({
-        id: d.id,
-        name: d.name,
-        kind: d.kind as FileKind,
-        size: d.size,
-        modified: d.modified,
-        modifiedRaw: d.modifiedRaw,
-        childCount: d.childCount,
-        parentId: subpath || null,
-        relPath: d.relPath,
-        owner: user?.name || 'You',
-        ownerId: user?.email || 'admin@govind.home',
-      } as any));
-      setItems(converted);
-    }
-  };
-
-  // When user changes: clear existing items immediately, reset folder, then reload from disk
-  const prevUserRef = useRef<string | null>(null);
   useEffect(() => {
-    const newUserId = currentUser?.email || null;
-    if (prevUserRef.current !== null && prevUserRef.current !== newUserId) {
-      // User switched — clear state immediately to prevent data leakage
-      setItems([]);
-      setActivityList([]);
-      setFolderSubpath('');
-    }
-    prevUserRef.current = newUserId;
-    // Pass currentUser explicitly — this runs before localStorage is updated
-    refreshFromDisk('', currentUser);
-  }, [currentUser]);
+    if (!marquee) return;
 
-  // Save session — auto-assign permanent folderId on first login, stamp sessionCreatedAt once
-  useEffect(() => {
-    if (currentUser) {
-      let userToSave = currentUser;
-      if (!userToSave.folderId) {
-        const stableKey = String(userToSave.id)
-          .toLowerCase()
-          .replace(/[^a-z0-9_-]/g, '_')
-          .replace(/_+/g, '_')
-          .replace(/^_|_$/g, '');
-        // Any admin-role user always maps to the well-known 'admin_govind_home' folder
-        // This ensures backward-compat: existing files on disk are never lost when the email changes
-        const folderId = userToSave.role === 'admin'
-          ? 'admin_govind_home'
-          : stableKey || userToSave.email.toLowerCase().replace(/[^a-z0-9]/g, '_');
-        userToSave = { ...userToSave, folderId };
-        setCurrentUser(userToSave);
-      }
-      // Stamp session creation time ONCE — never overwrite an existing timestamp
-      if (!userToSave.sessionCreatedAt) {
-        userToSave = { ...userToSave, sessionCreatedAt: Date.now() };
-      }
-      localStorage.setItem("govind_drive_user", JSON.stringify(userToSave));
-    } else {
-      localStorage.removeItem("govind_drive_user");
-    }
-  }, [currentUser]);
+    const handleMouseMove = (e: MouseEvent) => {
+      setMarquee((prev) => (prev ? { ...prev, currentX: e.clientX, currentY: e.clientY } : null));
 
-  // Save items per-user — prevents data mixing
-  useEffect(() => {
-    localStorage.setItem(userStorageKey('govind_drive_items'), JSON.stringify(items));
-  }, [items, currentUser]);
+      // Calculate bounding rectangle
+      const rectBox = {
+        left: Math.min(marquee.startX, e.clientX),
+        top: Math.min(marquee.startY, e.clientY),
+        right: Math.max(marquee.startX, e.clientX),
+        bottom: Math.max(marquee.startY, e.clientY),
+      };
 
-  const browserItems = useMemo(() => {
-    // Since items are loaded from the current user's personal disk folder
-    // and stored in per-user localStorage keys, ALL items in state
-    // already belong to currentUser. We only need to filter for shared view.
-    let list = [...items];
+      // Find all intersecting items
+      const elements = document.querySelectorAll<HTMLElement>('[data-relpath]');
+      const nextSelected = new Set<string>();
 
-    if (currentUser && active === "shared") {
-      const userEmail = (currentUser.email || '').toLowerCase();
-      list = list.filter((i) => {
-        return (i.shared || (i.sharedWith && i.sharedWith.map((s: string) => s.toLowerCase()).includes(userEmail)))
-          && !i.inTrash && i.parentId !== "trash";
+      elements.forEach((el) => {
+        const itemRect = el.getBoundingClientRect();
+        const overlaps = !(
+          itemRect.right < rectBox.left ||
+          itemRect.left > rectBox.right ||
+          itemRect.bottom < rectBox.top ||
+          itemRect.top > rectBox.bottom
+        );
+        if (overlaps) {
+          const path = el.getAttribute('data-relpath');
+          if (path) nextSelected.add(path);
+        }
       });
-    }
 
-    if (active === "my-drive" && !query.trim()) {
-      list = list.filter((i) => !i.inTrash && i.parentId !== "trash");
-    } else if (active === "recent" && !query.trim()) {
-      list = list.filter((i) => i.kind !== "folder" && !i.inTrash && i.parentId !== "trash");
-    } else if (active === "starred" && !query.trim()) {
-      list = list.filter((i) => i.starred && !i.inTrash && i.parentId !== "trash");
-    } else if (active === "shared" && !query.trim()) {
-      list = list.filter((i) => !i.inTrash && i.parentId !== "trash");
-    } else if (active === "trash" && !query.trim()) {
-      list = list.filter((i) => i.inTrash || i.parentId === "trash");
-    }
-
-    if (query.trim()) {
-      const q = query.toLowerCase();
-      list = list.filter((i) => i.name.toLowerCase().includes(q));
-    }
-
-    if (kindFilter !== "all") {
-      if (kindFilter === "doc") {
-        list = list.filter((i) => i.kind === "doc" || i.kind === "pdf" || i.kind === "slides");
-      } else if (kindFilter === "code") {
-        list = list.filter((i) => {
-          const ext = i.name.split('.').pop()?.toLowerCase() || '';
-          return ["txt", "md", "json", "js", "ts", "css", "html", "py", "sh", "log"].includes(ext);
-        });
-      } else {
-        list = list.filter((i) => i.kind === kindFilter);
+      if (nextSelected.size > 0) {
+        setSelectedPaths(nextSelected);
       }
+    };
+
+    const handleMouseUp = () => {
+      setMarquee(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [marquee]);
+
+  // -------------------------------------------------------------------------
+  // Login / Logout Handlers
+  // -------------------------------------------------------------------------
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginUsername.trim() || !loginPassword) return;
+    setLoginLoading(true);
+    setLoginError('');
+
+    const res = await ncLogin(loginUsername.trim(), loginPassword);
+    if (res.ok) {
+      setUser(res.user);
+      setLoginPassword('');
+      addToast('success', `Welcome back, ${res.user.displayName}!`);
+    } else {
+      setLoginError(res.error);
     }
+    setLoginLoading(false);
+  };
 
-    if (dateFilter !== "any") {
-      const now = Date.now();
-      if (dateFilter === "today") {
-        list = list.filter((i) => now - (i.modifiedRaw || 0) <= 86400000);
-      } else if (dateFilter === "7days") {
-        list = list.filter((i) => now - (i.modifiedRaw || 0) <= 7 * 86400000);
-      } else if (dateFilter === "30days") {
-        list = list.filter((i) => now - (i.modifiedRaw || 0) <= 30 * 86400000);
-      } else if (dateFilter === "2026") {
-        list = list.filter((i) => i.modified.includes("2026") || (i.modifiedRaw && new Date(i.modifiedRaw).getFullYear() === 2026));
-      }
+  const handleLogout = () => {
+    ncLogout();
+    setUser(null);
+    setFiles([]);
+    setCurrentPath('');
+    setSelectedPaths(new Set());
+    setSelectedItem(null);
+  };
+
+  // -------------------------------------------------------------------------
+  // Folder Navigation & Breadcrumb Trail
+  // -------------------------------------------------------------------------
+  const navigateToFolder = (relPath: string) => {
+    setCurrentPath(relPath);
+    setActiveTab('mydrive');
+  };
+
+  // Breadcrumbs array
+  const breadcrumbs = useMemo(() => {
+    if (!currentPath) {
+      return [{ name: 'My Drive', path: '' }];
     }
-
-    if (peopleFilter !== "anyone") {
-      if (peopleFilter === "admin") {
-        list = list.filter((i) => (i.owner && i.owner.toLowerCase().includes("admin")) || i.starred);
-      } else if (peopleFilter === "maya") {
-        list = list.filter((i) => i.shared || i.name.toLowerCase().includes("notes"));
-      } else if (peopleFilter === "leo") {
-        list = list.filter((i) => i.shared || i.name.toLowerCase().includes("plan"));
-      }
+    const parts = currentPath.split('/').filter(Boolean);
+    const crumbs = [{ name: 'My Drive', path: '' }];
+    let acc = '';
+    for (const part of parts) {
+      acc = acc ? `${acc}/${part}` : part;
+      crumbs.push({ name: part, path: acc });
     }
+    return crumbs;
+  }, [currentPath]);
 
-    list.sort((a, b) => {
-      if (a.kind === "folder" && b.kind !== "folder") return -1;
-      if (b.kind === "folder" && a.kind !== "folder") return 1;
+  // -------------------------------------------------------------------------
+  // Sharing Handlers (Nextcloud OCS Share API)
+  // -------------------------------------------------------------------------
+  const handleOpenShareModal = async (item: FileItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedItem(item);
+    setShareModal({
+      open: true,
+      item,
+      shares: [],
+      loading: true,
+    });
+    setSharePassword('');
+    setShareExpireDate('');
+    setShareWithUser('');
+    setCopiedShareId(null);
 
-      if (sort === "kind") return a.kind.localeCompare(b.kind);
-      if (sort === "name") return a.name.localeCompare(b.name);
-      if (sort === "size") {
-        const sizeA = parseFloat(a.size) || 0;
-        const sizeB = parseFloat(b.size) || 0;
-        return sizeB - sizeA;
-      }
-      return b.modifiedRaw - a.modifiedRaw;
+    const existingShares = await listSharesForPath(item.relPath);
+    setShareModal((prev) => ({
+      ...prev,
+      shares: existingShares,
+      loading: false,
+    }));
+  };
+
+  const handleCreatePublicShareLink = async () => {
+    if (!shareModal.item) return;
+    setCreatingShare(true);
+
+    const res = await createPublicShare(shareModal.item.relPath, {
+      password: sharePassword.trim() || undefined,
+      expireDate: shareExpireDate || undefined,
     });
 
-    if (active === "recent" && sort !== "name" && sort !== "size" && sort !== "kind") {
-      list.sort((a, b) => b.modifiedRaw - a.modifiedRaw);
-    }
-
-    return list;
-  }, [items, sort, query, active, kindFilter, dateFilter, peopleFilter]);
-
-  const folderItems = useMemo(
-    () => browserItems.filter((i) => i.kind === "folder"),
-    [browserItems]
-  );
-  const fileItems = useMemo(
-    () => browserItems.filter((i) => i.kind !== "folder"),
-    [browserItems]
-  );
-
-  const openMenu = (e: React.MouseEvent, item: DriveItem) => {
-    e.stopPropagation();
-    setMenu({ x: e.clientX, y: e.clientY, item });
-  };
-
-  const selectNav = (id: string) => {
-    setActive(id);
-    setSidebarOpen(false);
-    setFolderSubpath("");
-    setCurrentFolder(null);
-  };
-
-  const handleSelectAll = () => {
-    if (selectedIds.size === browserItems.length && browserItems.length > 0) {
-      setSelectedIds(new Set());
+    setCreatingShare(false);
+    if (res.ok && res.share) {
+      addToast('success', 'Public share link created!');
+      setShareModal((prev) => ({
+        ...prev,
+        shares: [...prev.shares, res.share!],
+      }));
+      setSharePassword('');
+      setShareExpireDate('');
+      refreshActivities();
     } else {
-      setSelectedIds(new Set(browserItems.map((i) => i.id)));
+      addToast('error', res.error || 'Failed to create share link.');
     }
   };
 
-  const handleClearSelection = () => {
-    setSelectedIds(new Set());
+  const handleCreateUserShareSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!shareModal.item || !shareWithUser.trim()) return;
+
+    const res = await createUserShare(shareModal.item.relPath, shareWithUser.trim());
+    if (res.ok && res.share) {
+      addToast('success', `Shared with ${shareWithUser.trim()}`);
+      setShareModal((prev) => ({
+        ...prev,
+        shares: [...prev.shares, res.share!],
+      }));
+      setShareWithUser('');
+      refreshActivities();
+    } else {
+      addToast('error', res.error || 'Failed to share with user.');
+    }
   };
 
-  const handleBatchStar = () => {
-    setItems((prev) =>
-      prev.map((i) => (selectedIds.has(i.id) ? { ...i, starred: !i.starred } : i))
-    );
-    setSelectedIds(new Set());
+  const handleDeleteShareItem = async (shareId: string) => {
+    const res = await deleteShare(shareId);
+    if (res.ok) {
+      addToast('success', 'Share removed.');
+      setShareModal((prev) => ({
+        ...prev,
+        shares: prev.shares.filter((s) => s.id !== shareId),
+      }));
+      refreshActivities();
+    } else {
+      addToast('error', res.error || 'Failed to remove share.');
+    }
   };
 
-  const handleBatchDelete = async () => {
-    const selectedItems = items.filter((i) => selectedIds.has(i.id));
-    for (const item of selectedItems) {
-      if ((item as any).relPath) {
-        await deleteDiskItem((item as any).relPath);
+  const handleCopyShareLink = (url: string, id: string) => {
+    const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
+    navigator.clipboard.writeText(fullUrl);
+    setCopiedShareId(id);
+    addToast('success', 'Share link copied to clipboard!');
+    setTimeout(() => setCopiedShareId(null), 3000);
+  };
+
+  // -------------------------------------------------------------------------
+  // Filtered & Separated Folders vs Files
+  // -------------------------------------------------------------------------
+  const { displayFolders, displayFiles } = useMemo(() => {
+    let result = activeTab === 'shared' ? [...sharedWithMeFiles] : [...files];
+
+    // Nav tabs
+    if (activeTab === 'starred') {
+      result = result.filter((f) => starredIds.has(f.relPath));
+    } else if (activeTab === 'recent') {
+      result.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+    }
+
+    // Type filter
+    if (typeFilter === 'folders') {
+      result = result.filter((f) => f.isDir);
+    } else if (typeFilter === 'doc') {
+      result = result.filter((f) => f.kind === 'doc');
+    } else if (typeFilter === 'sheet') {
+      result = result.filter((f) => f.kind === 'sheet');
+    } else if (typeFilter === 'slides') {
+      result = result.filter((f) => f.kind === 'slides');
+    } else if (typeFilter === 'video') {
+      result = result.filter((f) => f.kind === 'video');
+    } else if (typeFilter === 'image') {
+      result = result.filter((f) => f.kind === 'image');
+    } else if (typeFilter === 'pdf') {
+      result = result.filter((f) => f.kind === 'pdf');
+    }
+
+    // Date filter
+    if (dateFilter !== 'anytime') {
+      const now = new Date().getTime();
+      const oneDay = 24 * 60 * 60 * 1000;
+      if (dateFilter === 'today') {
+        result = result.filter((f) => now - f.modified.getTime() <= oneDay);
+      } else if (dateFilter === '7days') {
+        result = result.filter((f) => now - f.modified.getTime() <= 7 * oneDay);
+      } else if (dateFilter === '30days') {
+        result = result.filter((f) => now - f.modified.getTime() <= 30 * oneDay);
+      } else if (dateFilter === 'year') {
+        result = result.filter((f) => f.modified.getFullYear() === new Date().getFullYear());
       }
     }
-    await refreshFromDisk(folderSubpath);
-    setSelectedIds(new Set());
-  };
 
-  const handleBatchDownload = () => {
-    const selectedItems = items.filter((i) => selectedIds.has(i.id) && i.kind !== "folder");
-    selectedItems.forEach((item) => {
-      if ((item as any).relPath) {
-        const link = document.createElement("a");
-        link.href = getDiskDownloadUrl((item as any).relPath);
-        link.download = item.name;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    // Search query
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter((f) => f.name.toLowerCase().includes(q));
+    }
+
+    // Sort order
+    result.sort((a, b) => {
+      switch (sortBy) {
+        case 'name_asc':
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+        case 'name_desc':
+          return b.name.localeCompare(a.name, undefined, { numeric: true, sensitivity: 'base' });
+        case 'date_desc':
+          return b.modified.getTime() - a.modified.getTime();
+        case 'date_asc':
+          return a.modified.getTime() - b.modified.getTime();
+        case 'size_desc':
+          return b.size - a.size;
+        default:
+          return 0;
       }
     });
-    setSelectedIds(new Set());
-  };
 
-  const handleBatchMove = () => {
-    const firstSelected = items.find((i) => selectedIds.has(i.id));
-    if (firstSelected) {
-      setMoveItem(firstSelected);
-    }
-  };
+    const folders = result.filter((f) => f.isDir);
+    const regularFiles = result.filter((f) => !f.isDir);
 
-  const handleOpen = (item: DriveItem) => {
-    if (item.kind === "folder") {
-      const nextSubpath = folderSubpath ? `${folderSubpath}/${item.name}` : item.name;
-      setFolderSubpath(nextSubpath);
-      setCurrentFolder(item.name);
-      setQuery("");
-      refreshFromDisk(nextSubpath, currentUser);
+    return { displayFolders: folders, displayFiles: regularFiles };
+  }, [files, sharedWithMeFiles, activeTab, starredIds, typeFilter, dateFilter, searchQuery, sortBy]);
+
+  // -------------------------------------------------------------------------
+  // Create Folder & Documents
+  // -------------------------------------------------------------------------
+  const handleCreateFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newFolderName.trim();
+    if (!name) return;
+
+    const folderPath = currentPath ? `${currentPath}/${name}` : name;
+    const res = await createFolder(folderPath);
+    if (res.ok) {
+      addToast('success', `Created folder "${name}"`);
+      setNewFolderName('');
+      setNewFolderModalOpen(false);
+      refreshFiles();
+      refreshActivities();
     } else {
-      setPreviewItem(item);
+      addToast('error', res.error || 'Could not create folder.');
     }
   };
 
-  const handleRename = async (id: string, newName: string) => {
-    const item = items.find((i) => i.id === id);
-    if (item && (item as any).relPath) {
-      await renameDiskItem((item as any).relPath, newName, getDiskUserId(currentUser));
-      await refreshFromDisk(folderSubpath, currentUser);
+  const openInOnlyOffice = (item: FileItem) => {
+    const editorUrl = item.fileId
+      ? `/index.php/apps/onlyoffice/${item.fileId}`
+      : `/apps/files/?dir=/${encodeURIComponent(item.relPath.includes('/') ? item.relPath.substring(0, item.relPath.lastIndexOf('/')) : '')}`;
+
+    setOnlyOfficeModal({
+      open: true,
+      url: editorUrl,
+      name: item.name,
+      item,
+    });
+  };
+
+  const handleOpenNewDocModal = (type: 'doc' | 'sheet' | 'slides' | 'text') => {
+    const titles = {
+      doc: 'New Word Document',
+      sheet: 'New Excel Spreadsheet',
+      slides: 'New PowerPoint Presentation',
+      text: 'New Text Document',
+    };
+    const exts = { doc: '.docx', sheet: '.xlsx', slides: '.pptx', text: '.md' };
+    const defaults = {
+      doc: 'Untitled document',
+      sheet: 'Untitled spreadsheet',
+      slides: 'Untitled presentation',
+      text: 'Untitled note',
+    };
+
+    setNewDocModal({
+      open: true,
+      type,
+      title: titles[type],
+      ext: exts[type],
+    });
+    setNewDocName(defaults[type]);
+    setOpenDropdown(null);
+  };
+
+  const handleCreateDocSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDocName.trim()) return;
+
+    setCreatingDoc(true);
+    const res = await createOfficeDocument(newDocName.trim(), newDocModal.type, currentPath);
+    setCreatingDoc(false);
+
+    if (res.ok && res.relPath) {
+      const createdFileName = `${newDocName.trim()}${newDocModal.ext}`;
+      addToast('success', `Created ${createdFileName}`);
+      setNewDocModal((prev) => ({ ...prev, open: false }));
+
+      const updatedList = await listFiles(currentPath);
+      setFiles(updatedList);
+      refreshActivities();
+
+      const foundItem = updatedList.find((f) => f.name === createdFileName || f.relPath.endsWith(createdFileName));
+      if (foundItem) {
+        setSelectedItem(foundItem);
+        openInOnlyOffice(foundItem);
+      }
     } else {
-      setItems((prev) => prev.map((i) => (i.id === id ? { ...i, name: newName } : i)));
-    }
-    setRenaming(null);
-  };
-
-  const handleDelete = async (item: DriveItem) => {
-    if ((item as any).relPath) {
-      await deleteDiskItem((item as any).relPath, getDiskUserId(currentUser));
-      await refreshFromDisk(folderSubpath, currentUser);
-    } else {
-      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      addToast('error', res.error || 'Failed to create document.');
     }
   };
 
-  const handleToggleStar = (item: DriveItem) =>
-    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, starred: !i.starred } : i)));
+  // -------------------------------------------------------------------------
+  // Upload Files
+  // -------------------------------------------------------------------------
+  const handleUploadFileList = async (fileList: FileList | File[]) => {
+    const arr = Array.from(fileList);
+    if (arr.length === 0) return;
 
-  const handleUploadWithProgress = async (files: FileList | File[], subpath: string) => {
-    if (!files || files.length === 0) return;
-    const firstFileName = files[0].name;
-    const totalCount = files.length;
-
-    // Instantly set visible uploadState
     setUploadState({
       uploading: true,
-      fileName: firstFileName,
-      count: totalCount,
-      progress: 15,
+      fileName: arr[0].name,
+      progress: 5,
+      totalFiles: arr.length,
       completed: false,
     });
 
-    const ok = await uploadDiskFiles(files, subpath, (pct, fn) => {
-      setUploadState({
+    const res = await uploadFiles(arr, currentPath, (pct, fn) => {
+      setUploadState((prev) => ({
         uploading: true,
-        fileName: fn || firstFileName,
-        count: totalCount,
-        progress: Math.max(pct, 20),
+        fileName: fn,
+        progress: pct,
+        totalFiles: arr.length,
         completed: pct >= 100,
-      });
-    }, getDiskUserId(currentUser));
+        error: prev?.error,
+      }));
+    });
 
-    if (ok) {
-      setUploadState({
-        uploading: false,
-        fileName: firstFileName,
-        count: totalCount,
-        progress: 100,
-        completed: true,
-      });
-      addActivityRecord("uploaded", totalCount > 1 ? `${totalCount} files (${firstFileName})` : firstFileName);
-      await refreshFromDisk(folderSubpath);
-      setTimeout(() => {
-        setUploadState(null);
-      }, 5000);
+    if (res.ok) {
+      addToast('success', `Uploaded ${arr.length} ${arr.length === 1 ? 'file' : 'files'}`);
+      setUploadState((prev) => (prev ? { ...prev, uploading: false, completed: true, progress: 100 } : null));
+      setTimeout(() => setUploadState(null), 4000);
+      refreshFiles();
+      refreshStorage();
+      refreshActivities();
     } else {
-      // Fallback if backend server fails or is offline
-      const newItems: DriveItem[] = Array.from(files).map((f) => {
-        const ext = f.name.substring(f.name.lastIndexOf('.')).toLowerCase();
-        let kind: FileKind = 'doc';
-        if (['.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp'].includes(ext)) kind = 'image';
-        else if (['.mp4', '.mov', '.avi', '.mkv'].includes(ext)) kind = 'video';
-        else if (['.mp3', '.wav', '.flac'].includes(ext)) kind = 'audio';
-        else if (ext === '.pdf') kind = 'pdf';
-        else if (['.xlsx', '.csv', '.xls'].includes(ext)) kind = 'sheet';
-        else if (['.pptx', '.ppt'].includes(ext)) kind = 'slides';
-
-        const sizeFormatted = f.size > 1024 * 1024
-          ? `${(f.size / (1024 * 1024)).toFixed(1)} MB`
-          : `${Math.round(f.size / 1024)} KB`;
-
-        return {
-          id: newId(),
-          name: f.name,
-          kind,
-          size: sizeFormatted,
-          modified: 'Just now',
-          modifiedRaw: Date.now(),
-          parentId: subpath || null,
-          relPath: f.name,
-          owner: currentUser?.name || 'User',
-          ownerId: currentUser?.email || 'user@example.com',
-        };
-      });
-
-      setItems((prev) => [...newItems, ...prev]);
-      addActivityRecord("uploaded", totalCount > 1 ? `${totalCount} files (${firstFileName})` : firstFileName);
-
-      setUploadState({
-        uploading: false,
-        fileName: firstFileName,
-        count: totalCount,
-        progress: 100,
-        completed: false,
-        error: "Server connection issue. File saved in session.",
-      });
-
-      setTimeout(() => {
-        setUploadState(null);
-      }, 8000);
+      addToast('error', `Failed to upload: ${res.failed.join(', ')}`);
+      setUploadState((prev) => (prev ? { ...prev, uploading: false, error: 'Some files failed to upload' } : null));
     }
   };
 
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const destSubpath = targetUploadFolder !== null ? targetUploadFolder : folderSubpath;
-    await handleUploadWithProgress(files, destSubpath);
-    e.target.value = "";
-    setTargetUploadFolder(null);
-    setNewOpen(false);
-  };
-
-  const handleFolderUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    const filesToUpload: File[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const relPath = file.webkitRelativePath || file.name;
-      filesToUpload.push(new File([file], relPath, { type: file.type }));
-    }
-
-    const destSubpath = targetUploadFolder !== null ? targetUploadFolder : folderSubpath;
-    await handleUploadWithProgress(filesToUpload, destSubpath);
-    e.target.value = "";
-    setTargetUploadFolder(null);
-    setNewOpen(false);
-  };
-
-  const createFolder = async () => {
-    const folderName = "New Folder";
-    await createDiskFolder(folderSubpath, folderName, getDiskUserId(currentUser));
-    await refreshFromDisk(folderSubpath, currentUser);
-    setNewOpen(false);
-  };
-
-  const createFile = (kind: FileKind, baseName: string, size: string) => {
-    const item: DriveItem = {
-      id: newId(),
-      name: baseName,
-      kind,
-      size,
-      modified: "Just now",
-      modifiedRaw: Date.now(),
-      parentId: currentFolder,
-      owner: currentUser?.name || 'User',
-      ownerId: currentUser?.email || 'user@example.com',
-    };
-    setItems((prev) => [item, ...prev]);
-    setRenaming(item.id);
-    setNewOpen(false);
-  };
-
-  const newFileOptions = [
-    { icon: Upload, label: "Upload files", kind: "doc" as FileKind, name: "", size: "" },
-    { icon: FolderPlus, label: "Upload folder", kind: "folder" as FileKind, name: "", size: "" },
-    { icon: FolderPlus, label: "New folder", kind: "folder" as FileKind, name: "New folder", size: "—" },
-    { icon: FileText, label: "New document", kind: "doc" as FileKind, name: "Untitled document.docx", size: "1 KB" },
-    { icon: FileSpreadsheet, label: "New spreadsheet", kind: "sheet" as FileKind, name: "Untitled spreadsheet.xlsx", size: "1 KB" },
-    { icon: Presentation, label: "New presentation", kind: "slides" as FileKind, name: "Untitled presentation.pptx", size: "1 KB" },
-  ];
-
-  const handleInternalDropItem = async (draggedItem: DriveItem, targetFolder: DriveItem) => {
-    const rel = (draggedItem as any).relPath || draggedItem.name;
-    const targetRel = (targetFolder as any).relPath || targetFolder.name;
-    await moveDiskItem(rel, targetRel);
-    await refreshFromDisk(folderSubpath);
-  };
-
-  const [isDraggingExternal, setIsDraggingExternal] = useState(false);
-
-  const handleGlobalDragOver = (e: React.DragEvent) => {
+  // Drag & drop
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    if (e.dataTransfer.types.includes("Files")) {
-      setIsDraggingExternal(true);
-    }
+    e.stopPropagation();
+    setIsDragOver(true);
   };
-
-  const handleGlobalDragLeave = (e: React.DragEvent) => {
+  const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
-    if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= window.innerWidth || e.clientY >= window.innerHeight) {
-      setIsDraggingExternal(false);
-    }
+    e.stopPropagation();
+    setIsDragOver(false);
   };
-
-  // Recursive directory reader for HTML5 Drag & Drop webkitGetAsEntry
-  const readEntryFiles = async (entry: any, basePath = ""): Promise<{ file: File; relPath: string }[]> => {
-    if (entry.isFile) {
-      return new Promise((resolve) => {
-        entry.file((file: File) => {
-          const relPath = basePath ? `${basePath}/${file.name}` : file.name;
-          resolve([{ file, relPath }]);
-        });
-      });
-    } else if (entry.isDirectory) {
-      const dirReader = entry.createReader();
-      const entries: any[] = await new Promise((resolve) => {
-        dirReader.readEntries((results: any[]) => resolve(results || []));
-      });
-
-      const currentPath = basePath ? `${basePath}/${entry.name}` : entry.name;
-      const nestedLists = await Promise.all(
-        entries.map((childEntry) => readEntryFiles(childEntry, currentPath))
-      );
-      return nestedLists.flat();
-    }
-    return [];
-  };
-
-  const handleGlobalDrop = async (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDraggingExternal(false);
+    e.stopPropagation();
+    setIsDragOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleUploadFileList(e.dataTransfer.files);
+    }
+  };
 
-    const items = e.dataTransfer.items;
-    if (items && items.length > 0) {
-      const entryPromises: Promise<{ file: File; relPath: string }[]>[] = [];
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        if (item.kind === "file") {
-          const entry = item.webkitGetAsEntry?.();
-          if (entry) {
-            entryPromises.push(readEntryFiles(entry));
-          } else {
-            const file = item.getAsFile();
-            if (file) entryPromises.push(Promise.resolve([{ file, relPath: file.name }]));
+  // -------------------------------------------------------------------------
+  // Delete / Rename / Batch Handlers
+  // -------------------------------------------------------------------------
+  const handleDeleteConfirm = async () => {
+    if (deleteTargets.length === 0) return;
+    let successCount = 0;
+
+    for (const item of deleteTargets) {
+      const res = await deleteItem(item.relPath);
+      if (res.ok) successCount++;
+    }
+
+    if (successCount > 0) {
+      addToast('success', `Moved ${successCount} ${successCount === 1 ? 'item' : 'items'} to Trash`);
+      refreshFiles();
+      refreshStorage();
+      refreshActivities();
+      setSelectedPaths(new Set());
+      if (deleteTargets.some((d) => d.relPath === selectedItem?.relPath)) {
+        setSelectedItem(null);
+      }
+    } else {
+      addToast('error', 'Failed to delete selected item(s).');
+    }
+    setDeleteTargets([]);
+  };
+
+  const handleBatchDelete = () => {
+    const targets = files.filter((f) => selectedPaths.has(f.relPath));
+    if (targets.length > 0) {
+      setDeleteTargets(targets);
+    }
+  };
+
+  const handleBatchDownload = async () => {
+    const targets = displayFiles.filter((f) => selectedPaths.has(f.relPath));
+    for (const target of targets) {
+      downloadFile(target.relPath, target.name);
+    }
+  };
+
+  const handleBatchStar = () => {
+    setStarredIds((prev) => {
+      const next = new Set(prev);
+      const targets = files.filter((f) => selectedPaths.has(f.relPath));
+      const allStarred = targets.every((t) => next.has(t.relPath));
+
+      targets.forEach((t) => {
+        if (allStarred) next.delete(t.relPath);
+        else next.add(t.relPath);
+      });
+
+      localStorage.setItem('gd_starred', JSON.stringify(Array.from(next)));
+      return next;
+    });
+    addToast('info', 'Updated Starred items');
+  };
+
+  const handleRenameSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!renameTarget || !renameValue.trim()) return;
+
+    const res = await renameItem(renameTarget.relPath, renameValue.trim());
+    if (res.ok) {
+      addToast('success', `Renamed to "${renameValue.trim()}"`);
+      setRenameTarget(null);
+      setRenameValue('');
+      refreshFiles();
+      refreshActivities();
+    } else {
+      addToast('error', res.error || 'Failed to rename.');
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Move / Copy Execution (Modal)
+  // -------------------------------------------------------------------------
+  const handleExecuteMoveCopy = async () => {
+    if (!moveCopyModal || moveCopyModal.items.length === 0) return;
+
+    const destDir = moveCopyModal.selectedDestPath;
+    let count = 0;
+
+    for (const item of moveCopyModal.items) {
+      const targetRelPath = destDir ? `${destDir}/${item.name}` : item.name;
+      const res = moveCopyModal.mode === 'move'
+        ? await moveItem(item.relPath, targetRelPath)
+        : await copyItem(item.relPath, targetRelPath);
+
+      if (res.ok) count++;
+    }
+
+    if (count > 0) {
+      addToast('success', `${moveCopyModal.mode === 'move' ? 'Moved' : 'Copied'} ${count} item(s)`);
+      refreshFiles();
+      refreshStorage();
+      refreshActivities();
+      setSelectedPaths(new Set());
+    } else {
+      addToast('error', `Failed to ${moveCopyModal.mode} items.`);
+    }
+    setMoveCopyModal(null);
+  };
+
+  // -------------------------------------------------------------------------
+  // Admin User Creation (Phase 4.7)
+  // -------------------------------------------------------------------------
+  const handleCreateAdminUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminUserId.trim() || !newAdminUserPass) return;
+
+    const res = await createNCUser({
+      userid: newAdminUserId.trim(),
+      password: newAdminUserPass,
+      displayName: newAdminUserDisplay.trim() || newAdminUserId.trim(),
+    });
+
+    if (res.ok) {
+      addToast('success', `Created user "${newAdminUserId.trim()}"`);
+      setNewAdminUserId('');
+      setNewAdminUserPass('');
+      setNewAdminUserDisplay('');
+      refreshAdminUsers();
+    } else {
+      addToast('error', res.error || 'Failed to create user.');
+    }
+  };
+
+  const handleDeleteAdminUser = async (uid: string) => {
+    const res = await deleteNCUser(uid);
+    if (res.ok) {
+      addToast('success', `Deleted user "${uid}"`);
+      refreshAdminUsers();
+    } else {
+      addToast('error', res.error || 'Failed to delete user.');
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // File Click / Selection / Preview
+  // -------------------------------------------------------------------------
+  const handleItemSelect = (item: FileItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSelectedItem(item);
+
+    if (e.ctrlKey || e.metaKey) {
+      setSelectedPaths((prev) => {
+        const next = new Set(prev);
+        if (next.has(item.relPath)) next.delete(item.relPath);
+        else next.add(item.relPath);
+        return next;
+      });
+    } else {
+      setSelectedPaths(new Set([item.relPath]));
+    }
+  };
+
+  const handleFileClick = async (item: FileItem) => {
+    setSelectedItem(item);
+
+    if (item.isDir) {
+      navigateToFolder(item.relPath);
+      return;
+    }
+
+    if (['doc', 'sheet', 'slides'].includes(item.kind) || item.name.endsWith('.docx') || item.name.endsWith('.xlsx') || item.name.endsWith('.pptx') || item.name.endsWith('.csv')) {
+      openInOnlyOffice(item);
+      return;
+    }
+
+    setPreviewTarget(item);
+    setPreviewLoading(true);
+    const url = await fetchBlob(item.relPath);
+    setPreviewBlobUrl(url);
+    setPreviewLoading(false);
+  };
+
+  const closePreview = () => {
+    if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl);
+    setPreviewTarget(null);
+    setPreviewBlobUrl(null);
+  };
+
+  // Helper: Card banner class
+  const getBannerGradient = (kind: FileKind): string => {
+    switch (kind) {
+      case 'doc': return 'gradient-blue';
+      case 'sheet': return 'gradient-green';
+      case 'slides': return 'gradient-amber';
+      case 'pdf': return 'gradient-red';
+      case 'video': return 'gradient-red';
+      case 'image': return 'gradient-purple';
+      case 'code': return 'gradient-purple';
+      default: return 'gradient-slate';
+    }
+  };
+
+  // Helper: File Icon
+  const renderTileIcon = (kind: FileKind) => {
+    switch (kind) {
+      case 'image': return <ImageIcon size={28} className="file-tile-icon" />;
+      case 'video': return <Film size={28} className="file-tile-icon" />;
+      case 'sheet': return <FileSpreadsheet size={28} className="file-tile-icon" />;
+      case 'slides': return <FileText size={28} className="file-tile-icon" />;
+      case 'pdf': return <FileGeneric size={28} className="file-tile-icon" />;
+      case 'doc': return <FileText size={28} className="file-tile-icon" />;
+      default: return <FileGeneric size={28} className="file-tile-icon" />;
+    }
+  };
+
+  // Component: Rich Thumbnail Banner
+  function FileTileBanner({ file }: { file: FileItem | TrashItem }) {
+    const [imgUrl, setImgUrl] = useState<string | null>(() => {
+      return 'relPath' in file && imageThumbnailCache.has(file.relPath) ? imageThumbnailCache.get(file.relPath)! : null;
+    });
+    const [videoThumbUrl, setVideoThumbUrl] = useState<string | null>(() => {
+      return 'relPath' in file && videoThumbnailCache.has(file.relPath) ? videoThumbnailCache.get(file.relPath)! : null;
+    });
+
+    useEffect(() => {
+      let active = true;
+      if (file.kind === 'image' && 'relPath' in file && !imageThumbnailCache.has(file.relPath)) {
+        fetchBlob(file.relPath).then((url) => {
+          if (active && url) {
+            imageThumbnailCache.set(file.relPath, url);
+            setImgUrl(url);
           }
-        }
+        });
+      } else if (file.kind === 'video' && 'relPath' in file && !videoThumbnailCache.has(file.relPath)) {
+        fetchBlob(file.relPath).then(async (blobUrl) => {
+          if (!blobUrl || !active) return;
+          try {
+            const snap = await generateVideoThumbnail(blobUrl);
+            videoThumbnailCache.set(file.relPath, snap);
+            if (active) setVideoThumbUrl(snap);
+          } catch {
+            // Fallback
+          }
+        });
       }
+      return () => {
+        active = false;
+      };
+    }, [file]);
 
-      const results = (await Promise.all(entryPromises)).flat();
-      if (results.length > 0) {
-        const filesToUpload = results.map((r) => new File([r.file], r.relPath, { type: r.file.type }));
-        await handleUploadWithProgress(filesToUpload, folderSubpath);
-      }
-    }
-  };
-
-  const handleDropExternalFilesOnFolder = async (files: FileList | File[], targetFolder: DriveItem) => {
-    const targetSubpath = (targetFolder as any).relPath || targetFolder.name;
-    await handleUploadWithProgress(files, targetSubpath);
-  };
-
-  const renderRow = (item: DriveItem) => (
-    <FileRow
-      key={item.id}
-      item={item}
-      onMenu={openMenu}
-      onRename={handleRename}
-      onOpen={handleOpen}
-      onDropItem={handleInternalDropItem}
-      renaming={renaming}
-      selected={selectedIds.has(item.id)}
-      onToggleSelect={() => handleToggleSelect(item.id)}
-    />
-  );
-  const renderFolderCard = (item: DriveItem) => (
-    <FolderCard
-      key={item.id}
-      item={item}
-      onMenu={openMenu}
-      onRename={handleRename}
-      onOpen={handleOpen}
-      onDropItem={handleInternalDropItem}
-      onDropExternalFiles={handleDropExternalFilesOnFolder}
-      renaming={renaming}
-      selected={selectedIds.has(item.id)}
-      onToggleSelect={() => handleToggleSelect(item.id)}
-    />
-  );
-  const renderCard = (item: DriveItem) => (
-    <FileCard
-      key={item.id}
-      item={item}
-      onMenu={openMenu}
-      onRename={handleRename}
-      onOpen={handleOpen}
-      onDropItem={handleInternalDropItem}
-      onDropExternalFiles={handleDropExternalFilesOnFolder}
-      renaming={renaming}
-      selected={selectedIds.has(item.id)}
-      onToggleSelect={() => handleToggleSelect(item.id)}
-    />
-  );
-
-  // If not logged in, render LoginModal over blurred UI
-  if (!currentUser) {
-    return <LoginModal onLoginSuccess={(u) => setCurrentUser(u)} />;
-  }
-
-  return (
-    <div
-      onDragOver={handleGlobalDragOver}
-      onDragLeave={handleGlobalDragLeave}
-      onDrop={handleGlobalDrop}
-      className="relative flex h-screen overflow-hidden bg-[#f0f5fa]"
-    >
-      {/* Finder Drop Overlay */}
-      {isDraggingExternal && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#1B548B]/90 backdrop-blur-md text-white border-4 border-dashed border-white/60 shadow-2xl transition-all">
-          <img src="/logo-icon-white.png" alt="Govind Drive" className="h-20 w-auto animate-bounce mb-4 filter drop-shadow-md" />
-          <h2 className="text-2xl font-extrabold tracking-tight">Drop files here to upload to Govind Drive</h2>
-          <p className="text-sm font-medium text-blue-100 mt-2">Saving directly to your server disk</p>
+    if (file.kind === 'image' && imgUrl) {
+      return (
+        <div className="file-tile-banner">
+          <img src={imgUrl} alt={file.name} className="file-tile-img-cover" />
         </div>
-      )}
-      {/* Hidden file input for real uploads */}
-      <input
-        type="file"
-        ref={fileInputRef}
-        onChange={handleFileUpload}
-        className="hidden"
-        multiple
-      />
-      {/* Hidden folder input for directory uploads */}
-      <input
-        type="file"
-        ref={folderInputRef}
-        onChange={handleFolderUpload}
-        className="hidden"
-        {...({ webkitdirectory: "", directory: "" } as any)}
-        multiple
-      />
+      );
+    }
 
-      {/* Sidebar */}
-      <Sidebar
-        open={sidebarOpen}
-        active={active}
-        onSelect={selectNav}
-        onClose={() => setSidebarOpen(false)}
-        onNew={() => setNewOpen(true)}
-        user={currentUser}
-        onOpenAdmin={() => setAdminModalOpen(true)}
-        onOpenStorageManager={() => setStorageModalOpen(true)}
-        onOpenProfile={() => setProfileModalOpen(true)}
-      />
-
-      {/* Main column */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Header with high z-index and visible overflow for floating dropdown menus */}
-        <header className="relative z-30 flex h-16 shrink-0 items-center justify-between gap-3 bg-transparent px-3 lg:px-6">
-          {/* Left: Mobile Menu + Search Bar */}
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="flex items-center gap-1.5 lg:hidden shrink-0">
-              <button onClick={() => setSidebarOpen(true)} className="rounded-full p-2 text-gray-500 hover:bg-gray-200/50" aria-label="Open menu">
-                <Menu className="h-5 w-5" />
-              </button>
-              <img src="/logo-icon.png" alt="Govind Drive" className="h-7 w-auto object-contain" />
-            </div>
-
-            {/* Search bar */}
-            <div className="relative shrink-0 w-44 sm:w-60 md:w-72 lg:w-80 xl:w-[320px]">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search..."
-                className="w-full rounded-full border border-transparent bg-white py-2 pl-10 pr-8 text-xs sm:text-sm text-gray-800 shadow-xs outline-none transition-all focus:bg-white focus:ring-2 focus:ring-blue-100"
-              />
-              {query && (
-                <button onClick={() => setQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-gray-400 hover:bg-gray-200">
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
+    if (file.kind === 'video') {
+      if (videoThumbUrl) {
+        return (
+          <div className="file-tile-banner" style={{ background: '#0f172a' }}>
+            <img src={videoThumbUrl} alt={file.name} className="file-tile-img-cover" />
+            <div className="video-play-badge">
+              <Play size={16} fill="#ffffff" color="#ffffff" style={{ marginLeft: 2 }} />
             </div>
           </div>
+        );
+      }
+      return (
+        <div className="file-tile-banner gradient-red">
+          <Film size={34} className="file-tile-icon" />
+          <div className="video-play-badge">
+            <Play size={14} fill="#ffffff" color="#ffffff" style={{ marginLeft: 2 }} />
+          </div>
+        </div>
+      );
+    }
 
-          {/* Right Side Controls Grouped Together: Filter Pills, View Toggle, Sort, Activity, Admin, Profile */}
-          <div className="flex items-center gap-2 shrink-0 ml-auto">
-            {/* Filter Pills (Type ▾, Modified ▾, People ▾) */}
-            <div className="hidden sm:flex items-center gap-2 overflow-visible">
-              <GoogleDriveFilters
-                kindFilter={kindFilter}
-                onSelectKind={setKindFilter}
-                dateFilter={dateFilter}
-                onSelectDate={setDateFilter}
-                peopleFilter={peopleFilter}
-                onSelectPeople={setPeopleFilter}
+    if (file.kind === 'doc') {
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'doc';
+      const isMd = ext === 'md' || ext === 'markdown';
+      const isTxt = ext === 'txt';
+      const isWord = ext === 'docx' || ext === 'doc' || ext === 'odt';
+      const bannerBg = isMd ? 'gradient-purple' : isTxt ? 'gradient-slate' : 'gradient-blue';
+      const headerBg = isMd ? '#7c3aed' : isTxt ? '#475569' : '#2563eb';
+      const badgeText = isMd ? 'MD' : isTxt ? 'TXT' : isWord ? 'DOCX' : ext.toUpperCase();
+
+      return (
+        <div className={`file-tile-banner ${bannerBg}`}>
+          <div className="doc-mockup-preview">
+            <div className="doc-mockup-header" style={{ background: headerBg }} />
+            <div className="doc-mockup-line" />
+            <div className="doc-mockup-line" />
+            <div className="doc-mockup-line medium" />
+            <div className="doc-mockup-line short" />
+            <span className="doc-mockup-badge" style={{ background: headerBg }}>{badgeText}</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (file.kind === 'sheet') {
+      return (
+        <div className="file-tile-banner gradient-green">
+          <div className="doc-mockup-preview">
+            <div className="doc-mockup-header" style={{ background: '#16a34a' }} />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 2, marginTop: 2 }}>
+              {Array.from({ length: 9 }).map((_, i) => (
+                <div key={i} style={{ height: 10, background: '#f1f5f9', borderRadius: 1 }} />
+              ))}
+            </div>
+            <span className="doc-mockup-badge" style={{ background: '#16a34a' }}>XLSX</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (file.kind === 'slides') {
+      return (
+        <div className="file-tile-banner gradient-amber">
+          <div className="doc-mockup-preview">
+            <div style={{ width: '100%', height: '52%', background: '#fef3c7', borderRadius: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <FileText size={18} className="text-amber-600" />
+            </div>
+            <div className="doc-mockup-line medium" style={{ marginTop: 2 }} />
+            <div className="doc-mockup-line short" />
+            <span className="doc-mockup-badge" style={{ background: '#d97706' }}>PPTX</span>
+          </div>
+        </div>
+      );
+    }
+
+    if (file.kind === 'pdf') {
+      return (
+        <div className="file-tile-banner gradient-red">
+          <div className="doc-mockup-preview">
+            <div className="doc-mockup-header" style={{ background: '#dc2626' }} />
+            <div className="doc-mockup-line" />
+            <div className="doc-mockup-line medium" />
+            <div className="doc-mockup-line short" />
+            <span className="doc-mockup-badge" style={{ background: '#dc2626' }}>PDF</span>
+          </div>
+        </div>
+      );
+    }
+
+    const bannerGradient = getBannerGradient(file.kind);
+    return (
+      <div className={`file-tile-banner ${bannerGradient}`}>
+        {renderTileIcon(file.kind)}
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // VIEW: LOGIN SCREEN
+  // -------------------------------------------------------------------------
+  if (!user) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--main-bg)', padding: 20 }}>
+        <div style={{ width: '100%', maxWidth: 400, background: 'var(--surface)', borderRadius: 16, padding: '36px 32px', boxShadow: '0 10px 30px rgba(0,0,0,.08)', border: '1px solid var(--border)' }}>
+          <div style={{ textAlign: 'center', marginBottom: 28 }}>
+            <img src="/Govind Drive Logo Small 2.png" alt="Govind Drive" style={{ height: 44, width: 'auto', objectFit: 'contain', marginBottom: 14 }} />
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-main)' }}>Sign in to Govind Drive</h2>
+            <p style={{ fontSize: 13, color: 'var(--text-sub)', marginTop: 4 }}>Enterprise Home Cloud • 4TB NVMe High Speed</p>
+          </div>
+
+          {loginError && (
+            <div style={{ padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, color: '#ef4444', fontSize: 12.5, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AlertCircle size={16} />
+              <span>{loginError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-sub)', marginBottom: 6 }}>Username / Email</label>
+              <input
+                type="text"
+                required
+                autoFocus
+                value={loginUsername}
+                onChange={(e) => setLoginUsername(e.target.value)}
+                placeholder="e.g. govindvaghasia@gmail.com"
               />
             </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-sub)', marginBottom: 6 }}>Password</label>
+              <input
+                type="password"
+                required
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder="••••••••••••"
+              />
+            </div>
+            <button type="submit" disabled={loginLoading} className="btn btn-primary" style={{ justifyContent: 'center', marginTop: 8, padding: '10px 0', borderRadius: 8 }}>
+              {loginLoading ? <RefreshCw size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+              <span>{loginLoading ? 'Signing In...' : 'Sign In'}</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
-            {/* View toggle (Grid / List pill) */}
-            <div className="flex items-center gap-0.5 rounded-full bg-white p-0.5 shadow-xs border border-gray-200/80">
+  // -------------------------------------------------------------------------
+  // VIEW: MAIN APPLICATION
+  // -------------------------------------------------------------------------
+  const isStarredTab = activeTab === 'starred';
+  const hasItems = displayFolders.length > 0 || displayFiles.length > 0;
+
+  return (
+    <div className="app-container">
+      {/* Toast Container */}
+      <div className="toast-container">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast ${t.type}`}>
+            {t.type === 'success' && <Check size={16} />}
+            {t.type === 'error' && <AlertCircle size={16} />}
+            {t.type === 'info' && <Sparkles size={16} />}
+            <span>{t.message}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Marquee Selection Visual Box */}
+      {marquee && (
+        <div
+          className="marquee-selection-box"
+          style={{
+            left: Math.min(marquee.startX, marquee.currentX),
+            top: Math.min(marquee.startY, marquee.currentY),
+            width: Math.abs(marquee.currentX - marquee.startX),
+            height: Math.abs(marquee.currentY - marquee.startY),
+          }}
+        />
+      )}
+
+      {/* Hidden File Inputs */}
+      <input
+        type="file"
+        multiple
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          if (e.target.files) handleUploadFileList(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      <input
+        type="file"
+        multiple
+        // @ts-expect-error webkitdirectory standard
+        webkitdirectory="true"
+        ref={folderInputRef}
+        style={{ display: 'none' }}
+        onChange={(e) => {
+          if (e.target.files) handleUploadFileList(e.target.files);
+          e.target.value = '';
+        }}
+      />
+
+      {/* ── LEFT SIDEBAR ── */}
+      <aside className="sidebar">
+        {/* Sidebar Brand / Logo */}
+        <div
+          className="sidebar-logo"
+          onClick={() => {
+            setActiveTab('mydrive');
+            navigateToFolder('');
+          }}
+          style={{ cursor: 'pointer' }}
+        >
+          <img
+            src="/Govind Drive Logo Small 2.png"
+            alt="Govind Drive"
+            style={{ height: 50, width: 'auto', objectFit: 'contain', maxWidth: '100%' }}
+          />
+        </div>
+
+        {/* "+ New" Pill Button */}
+        <div className="sidebar-new-container">
+          <button
+            className="sidebar-new-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpenDropdown(openDropdown === 'new' ? null : 'new');
+            }}
+          >
+            <Plus size={18} strokeWidth={2.5} />
+            <span>New</span>
+          </button>
+
+          {/* New Menu Dropdown */}
+          {openDropdown === 'new' && (
+            <div className="dropdown-menu left" style={{ width: 220, top: 46 }} onClick={(e) => e.stopPropagation()}>
               <button
-                onClick={() => setView("grid")}
-                aria-label="Grid view"
-                className={`rounded-full p-1.5 transition-colors ${view === "grid" ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:text-gray-800"
-                  }`}
+                className="dropdown-item"
+                onClick={() => {
+                  setOpenDropdown(null);
+                  setNewFolderModalOpen(true);
+                }}
               >
-                <LayoutGrid className="h-4 w-4" />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <FolderPlus size={16} className="text-amber-500" />
+                  <span>New folder</span>
+                </div>
+              </button>
+              <div className="ctx-sep" />
+              <button
+                className="dropdown-item"
+                onClick={() => {
+                  setOpenDropdown(null);
+                  fileInputRef.current?.click();
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Upload size={16} style={{ color: 'var(--primary-blue)' }} />
+                  <span>File upload</span>
+                </div>
               </button>
               <button
-                onClick={() => setView("list")}
-                aria-label="List view"
-                className={`rounded-full p-1.5 transition-colors ${view === "list" ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:text-gray-800"
-                  }`}
+                className="dropdown-item"
+                onClick={() => {
+                  setOpenDropdown(null);
+                  folderInputRef.current?.click();
+                }}
               >
-                <List className="h-4 w-4" />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Folder size={16} style={{ color: 'var(--primary-blue)' }} />
+                  <span>Folder upload</span>
+                </div>
+              </button>
+              <div className="ctx-sep" />
+              <button className="dropdown-item" onClick={() => handleOpenNewDocModal('doc')}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <FileText size={16} style={{ color: '#2563eb' }} />
+                  <span>Word Document</span>
+                </div>
+              </button>
+              <button className="dropdown-item" onClick={() => handleOpenNewDocModal('sheet')}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <FileSpreadsheet size={16} style={{ color: '#16a34a' }} />
+                  <span>Excel Spreadsheet</span>
+                </div>
+              </button>
+              <button className="dropdown-item" onClick={() => handleOpenNewDocModal('slides')}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <FileText size={16} style={{ color: '#d97706' }} />
+                  <span>PowerPoint Slides</span>
+                </div>
+              </button>
+              <button className="dropdown-item" onClick={() => handleOpenNewDocModal('text')}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <FileCode size={16} style={{ color: '#64748b' }} />
+                  <span>Text Document</span>
+                </div>
               </button>
             </div>
+          )}
+        </div>
 
-            {/* Sort button */}
-            <div className="relative">
+        {/* Sidebar Nav */}
+        <nav className="sidebar-nav">
+          <button
+            className={`sidebar-nav-item ${activeTab === 'mydrive' && !currentPath ? 'active' : ''} ${dragOverTarget === 'root' ? 'drag-target' : ''}`}
+            onClick={() => {
+              setActiveTab('mydrive');
+              setCurrentPath('');
+            }}
+            onDragOver={(e) => {
+              if (draggedItem && currentPath !== '') {
+                e.preventDefault();
+                e.stopPropagation();
+                setDragOverTarget('root');
+              }
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (dragOverTarget === 'root') setDragOverTarget(null);
+            }}
+            onDrop={async (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragOverTarget(null);
+              if (!draggedItem || currentPath === '') return;
+              const targets = selectedPaths.has(draggedItem.relPath)
+                ? files.filter((f) => selectedPaths.has(f.relPath))
+                : [draggedItem];
+
+              for (const target of targets) {
+                await moveItem(target.relPath, target.name);
+              }
+              addToast('success', `Moved ${targets.length} item(s) to My Drive root`);
+              refreshFiles();
+              refreshStorage();
+              refreshActivities();
+              setDraggedItem(null);
+            }}
+          >
+            <Folder size={17} />
+            <span>My Drive</span>
+          </button>
+          <button
+            className={`sidebar-nav-item ${activeTab === 'recent' ? 'active' : ''}`}
+            onClick={() => setActiveTab('recent')}
+          >
+            <Clock size={17} />
+            <span>Recent</span>
+          </button>
+          <button
+            className={`sidebar-nav-item ${activeTab === 'starred' ? 'active' : ''}`}
+            onClick={() => setActiveTab('starred')}
+          >
+            <Star size={17} />
+            <span>Starred</span>
+          </button>
+          <button
+            className={`sidebar-nav-item ${activeTab === 'shared' ? 'active' : ''}`}
+            onClick={() => setActiveTab('shared')}
+          >
+            <Users size={17} />
+            <span>Shared with me</span>
+          </button>
+          <button
+            className={`sidebar-nav-item ${activeTab === 'trash' ? 'active' : ''}`}
+            onClick={() => setActiveTab('trash')}
+          >
+            <Trash2 size={17} />
+            <span>Trash</span>
+          </button>
+        </nav>
+
+        {/* Sidebar Bottom (User & Storage) */}
+        <div className="sidebar-bottom">
+          <div className="sidebar-user-card" onClick={(e) => { e.stopPropagation(); setShowProfileMenu(!showProfileMenu); }} style={{ cursor: 'pointer' }}>
+            <UserAvatar username={user.username} displayName={user.displayName} size={34} />
+            <div className="sidebar-user-details">
+              <div className="sidebar-user-name">{user.displayName}</div>
+              <div className="sidebar-user-email">{user.email || user.username}</div>
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLogout();
+              }}
+              title="Sign Out"
+              style={{ color: 'var(--text-sub)' }}
+            >
+              <LogOut size={15} />
+            </button>
+          </div>
+
+          <div className="sidebar-storage-box">
+            <div className="sidebar-storage-label">
+              <HardDrive size={12} />
+              <span>NVMe Storage</span>
+            </div>
+            <div className="sidebar-storage-bar">
+              <div
+                className="sidebar-storage-fill"
+                style={{
+                  width: storageInfo.total > 0
+                    ? `${Math.min(100, (storageInfo.used / storageInfo.total) * 100)}%`
+                    : '12%',
+                }}
+              />
+            </div>
+            <div className="sidebar-storage-text">
+              {formatBytes(storageInfo.used)}
+              {storageInfo.total > 0 && ` of ${formatBytes(storageInfo.total)}`} used
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* ── MAIN WRAPPER ── */}
+      <div className="main-wrapper">
+        {/* Topbar Header */}
+        <header className="topbar">
+          {/* Search Pill */}
+          <div className="search-pill">
+            <Search size={16} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search in Drive..."
+            />
+            {searchQuery && (
               <button
-                onClick={() => setSortOpen((v) => !v)}
-                className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-gray-700 shadow-xs hover:bg-gray-50 transition"
+                onClick={() => setSearchQuery('')}
+                style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-sub)' }}
               >
-                <SortAsc className="h-3.5 w-3.5 text-gray-500" />
-                <span>
-                  {sort === "date" ? "Date" : sort === "name" ? "Name" : sort === "size" ? "Size" : "Type"}
-                </span>
-                <ChevronDown className="h-3.5 w-3.5 text-gray-500" />
+                <X size={14} />
               </button>
-              {sortOpen && (
-                <div className="absolute right-0 top-full z-50 mt-1.5 w-44 overflow-hidden rounded-2xl border border-gray-200 bg-white p-1.5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-                  {(["date", "name", "size", "type"] as const).map((k) => (
-                    <button
-                      key={k}
-                      onClick={() => {
-                        setSort(k);
-                        setSortOpen(false);
-                      }}
-                      className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-xs transition ${sort === k ? "bg-blue-50 text-blue-700 font-bold" : "text-gray-700 hover:bg-gray-50"
-                        }`}
-                    >
-                      <span>{k === "date" ? "Last modified" : k === "size" ? "Storage used" : k === "name" ? "Name" : "Type"}</span>
-                      {sort === k && <Check className="h-4 w-4 text-blue-600" />}
-                    </button>
-                  ))}
+            )}
+          </div>
+
+          {/* Action Filters & Right Controls */}
+          <div className="header-actions">
+            {/* Type Dropdown */}
+            <div style={{ position: 'relative' }}>
+              <button
+                className="dropdown-filter-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenDropdown(openDropdown === 'type' ? null : 'type');
+                }}
+              >
+                <span>Type</span>
+                <ChevronDown size={14} />
+              </button>
+              {openDropdown === 'type' && (
+                <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                  <button className={`dropdown-item ${typeFilter === 'all' ? 'active' : ''}`} onClick={() => { setTypeFilter('all'); setOpenDropdown(null); }}>
+                    <span>All file types</span>
+                    {typeFilter === 'all' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${typeFilter === 'folders' ? 'active' : ''}`} onClick={() => { setTypeFilter('folders'); setOpenDropdown(null); }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Folder size={14} className="text-amber-500" /><span>Folders</span></div>
+                    {typeFilter === 'folders' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${typeFilter === 'doc' ? 'active' : ''}`} onClick={() => { setTypeFilter('doc'); setOpenDropdown(null); }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><FileText size={14} className="text-blue-600" /><span>Documents</span></div>
+                    {typeFilter === 'doc' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${typeFilter === 'sheet' ? 'active' : ''}`} onClick={() => { setTypeFilter('sheet'); setOpenDropdown(null); }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><FileSpreadsheet size={14} className="text-emerald-600" /><span>Spreadsheets</span></div>
+                    {typeFilter === 'sheet' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${typeFilter === 'slides' ? 'active' : ''}`} onClick={() => { setTypeFilter('slides'); setOpenDropdown(null); }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><FileText size={14} className="text-amber-600" /><span>Presentations</span></div>
+                    {typeFilter === 'slides' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${typeFilter === 'video' ? 'active' : ''}`} onClick={() => { setTypeFilter('video'); setOpenDropdown(null); }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Film size={14} className="text-rose-600" /><span>Videos</span></div>
+                    {typeFilter === 'video' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${typeFilter === 'image' ? 'active' : ''}`} onClick={() => { setTypeFilter('image'); setOpenDropdown(null); }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><ImageIcon size={14} className="text-purple-600" /><span>Photos & Images</span></div>
+                    {typeFilter === 'image' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${typeFilter === 'pdf' ? 'active' : ''}`} onClick={() => { setTypeFilter('pdf'); setOpenDropdown(null); }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><FileGeneric size={14} className="text-red-500" /><span>PDFs</span></div>
+                    {typeFilter === 'pdf' && <Check size={14} />}
+                  </button>
                 </div>
               )}
             </div>
 
-            {/* Info / Activity panel toggle button */}
+            {/* Modified Dropdown */}
+            <div style={{ position: 'relative' }}>
+              <button
+                className="dropdown-filter-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenDropdown(openDropdown === 'date' ? null : 'date');
+                }}
+              >
+                <span>Modified</span>
+                <ChevronDown size={14} />
+              </button>
+              {openDropdown === 'date' && (
+                <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                  <button className={`dropdown-item ${dateFilter === 'anytime' ? 'active' : ''}`} onClick={() => { setDateFilter('anytime'); setOpenDropdown(null); }}>
+                    <span>Anytime</span>
+                    {dateFilter === 'anytime' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${dateFilter === 'today' ? 'active' : ''}`} onClick={() => { setDateFilter('today'); setOpenDropdown(null); }}>
+                    <span>Today</span>
+                    {dateFilter === 'today' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${dateFilter === '7days' ? 'active' : ''}`} onClick={() => { setDateFilter('7days'); setOpenDropdown(null); }}>
+                    <span>Last 7 days</span>
+                    {dateFilter === '7days' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${dateFilter === '30days' ? 'active' : ''}`} onClick={() => { setDateFilter('30days'); setOpenDropdown(null); }}>
+                    <span>Last 30 days</span>
+                    {dateFilter === '30days' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${dateFilter === 'year' ? 'active' : ''}`} onClick={() => { setDateFilter('year'); setOpenDropdown(null); }}>
+                    <span>This year ({new Date().getFullYear()})</span>
+                    {dateFilter === 'year' && <Check size={14} />}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Grid / List View Toggle */}
             <button
-              onClick={() => setActivityPinned((v) => !v)}
-              title="Toggle activity sidebar"
-              className={`hidden lg:block rounded-full p-2 transition-colors ${activityPinned ? "bg-blue-100 text-blue-700" : "bg-white text-gray-500 hover:bg-gray-100 shadow-xs border border-gray-200/80"
-                }`}
+              className={`topbar-icon ${viewMode === 'grid' ? 'active' : ''}`}
+              onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
+              title="Toggle Grid / List View"
             >
-              {activityPinned ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
+              {viewMode === 'grid' ? <Grid size={16} /> : <ListIcon size={16} />}
             </button>
 
-            {/* Admin invite button */}
-            {currentUser.role === "admin" && (
+            {/* Sort Date Dropdown */}
+            <div style={{ position: 'relative' }}>
               <button
-                onClick={() => setAdminModalOpen(true)}
-                className="hidden items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100 transition-colors sm:flex"
-                title="Invite Friends & Admin Console"
+                className="dropdown-filter-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setOpenDropdown(openDropdown === 'sort' ? null : 'sort');
+                }}
               >
-                <Shield className="h-3.5 w-3.5 text-blue-600" />
-                <span>Invite</span>
+                <span>Sort</span>
+                <ChevronDown size={14} />
               </button>
-            )}
+              {openDropdown === 'sort' && (
+                <div className="dropdown-menu" onClick={(e) => e.stopPropagation()}>
+                  <button className={`dropdown-item ${sortBy === 'name_asc' ? 'active' : ''}`} onClick={() => { setSortBy('name_asc'); setOpenDropdown(null); }}>
+                    <span>Name (A-Z)</span>
+                    {sortBy === 'name_asc' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${sortBy === 'name_desc' ? 'active' : ''}`} onClick={() => { setSortBy('name_desc'); setOpenDropdown(null); }}>
+                    <span>Name (Z-A)</span>
+                    {sortBy === 'name_desc' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${sortBy === 'date_desc' ? 'active' : ''}`} onClick={() => { setSortBy('date_desc'); setOpenDropdown(null); }}>
+                    <span>Modified (Newest)</span>
+                    {sortBy === 'date_desc' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${sortBy === 'date_asc' ? 'active' : ''}`} onClick={() => { setSortBy('date_asc'); setOpenDropdown(null); }}>
+                    <span>Modified (Oldest)</span>
+                    {sortBy === 'date_asc' && <Check size={14} />}
+                  </button>
+                  <button className={`dropdown-item ${sortBy === 'size_desc' ? 'active' : ''}`} onClick={() => { setSortBy('size_desc'); setOpenDropdown(null); }}>
+                    <span>Size (Largest)</span>
+                    {sortBy === 'size_desc' && <Check size={14} />}
+                  </button>
+                </div>
+              )}
+            </div>
 
-            {/* User Profile & Logout */}
-            <div className="flex items-center gap-2 shrink-0 border-l border-gray-200/80 pl-2">
+            {/* Activity Toggle */}
+            <button
+              className={`topbar-icon ${showActivity ? 'active' : ''}`}
+              onClick={() => setShowActivity(!showActivity)}
+              title="Toggle Details & Activity Sidebar"
+            >
+              <Info size={16} />
+            </button>
+
+            {/* Top Right Profile Avatar with Interactive Dropdown */}
+            <div style={{ position: 'relative' }}>
               <div
-                onClick={() => setProfileModalOpen(true)}
-                className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-blue-600 text-xs font-bold text-white ring-2 ring-white cursor-pointer hover:scale-105 transition shadow-sm"
-                title={`Edit ${currentUser.name}'s Profile (${currentUser.role})`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowProfileMenu(!showProfileMenu);
+                }}
+                style={{ cursor: 'pointer' }}
+                title={user.displayName}
               >
-                {currentUser.avatar ? (
-                  <img src={currentUser.avatar} alt={currentUser.name} className="h-full w-full object-cover" />
-                ) : (
-                  currentUser.name.substring(0, 2).toUpperCase()
-                )}
+                <UserAvatar username={user.username} displayName={user.displayName} size={34} />
               </div>
-              <button
-                onClick={() => setCurrentUser(null)}
-                className="rounded-full p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-700 transition"
-                title="Log Out"
-              >
-                <LogOut className="h-4 w-4" />
-              </button>
+
+              {/* Profile Popover Menu */}
+              {showProfileMenu && (
+                <div className="profile-popover" onClick={(e) => e.stopPropagation()}>
+                  <div className="profile-popover-header">
+                    <UserAvatar username={user.username} displayName={user.displayName} size={44} />
+                    <div className="profile-popover-info">
+                      <div className="profile-popover-name">{user.displayName}</div>
+                      <div className="profile-popover-email">{user.email || user.username}</div>
+                      {user.isAdmin && <div className="profile-popover-badge"><Shield size={10} /> Admin</div>}
+                    </div>
+                  </div>
+
+                  {/* Storage Meter */}
+                  <div className="profile-popover-storage">
+                    <div className="profile-storage-labels">
+                      <span>NVMe High-Speed Quota</span>
+                      <span>{formatBytes(storageInfo.used)}</span>
+                    </div>
+                    <div className="sidebar-storage-bar">
+                      <div
+                        className="sidebar-storage-fill"
+                        style={{
+                          width: storageInfo.total > 0
+                            ? `${Math.min(100, (storageInfo.used / storageInfo.total) * 100)}%`
+                            : '12%',
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Server Connection Status */}
+                  <div style={{ padding: '10px 0', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-sub)' }}>
+                      <Globe size={13} className="text-emerald-600" />
+                      <span>Nextcloud Server</span>
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-main)' }}>Online</span>
+                  </div>
+
+                  {/* Theme Switcher & Actions */}
+                  <div className="profile-popover-menu">
+                    {user.isAdmin && (
+                      <button
+                        className="profile-menu-item"
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          setAdminUsersModalOpen(true);
+                          refreshAdminUsers();
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <Users size={15} className="text-indigo-600" />
+                          <span>Admin User Management</span>
+                        </div>
+                      </button>
+                    )}
+
+                    <button
+                      className="profile-menu-item"
+                      onClick={() => setIsDarkMode(!isDarkMode)}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {isDarkMode ? <Sun size={15} className="text-amber-500" /> : <Moon size={15} className="text-indigo-500" />}
+                        <span>Dark Theme</span>
+                      </div>
+                      <span style={{ fontSize: 11, color: 'var(--text-sub)' }}>{isDarkMode ? 'On' : 'Off'}</span>
+                    </button>
+
+                    <button
+                      className="profile-menu-item"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        window.open(NC_HOST, '_blank');
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <ExternalLink size={15} />
+                        <span>Open Nextcloud Web</span>
+                      </div>
+                    </button>
+
+                    <div className="ctx-sep" />
+
+                    <button
+                      className="profile-menu-item danger"
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        handleLogout();
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <LogOut size={15} />
+                        <span>Sign Out</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </header>
 
-        {/* Mobile Filter Bar (Visible on mobile screens) */}
-        <div className="flex sm:hidden items-center gap-2 px-3 pb-2 overflow-x-auto no-scrollbar">
-          <GoogleDriveFilters
-            kindFilter={kindFilter}
-            onSelectKind={setKindFilter}
-            dateFilter={dateFilter}
-            onSelectDate={setDateFilter}
-            peopleFilter={peopleFilter}
-            onSelectPeople={setPeopleFilter}
-          />
-        </div>
-
-        {/* Content row */}
-        <div className="flex min-h-0 flex-1 overflow-hidden px-2 sm:px-3 pb-3 lg:px-4 lg:pb-4 gap-3 lg:gap-4">
-
-          {/* Scrollable main with Canvas Right-Click Context Menu & Marquee Drag Selection */}
-          <main
-            ref={mainRef}
+        {/* Content Layout (Main Area + Right Activity) */}
+        <div className="content-layout">
+          {/* Main Scrollable Area */}
+          <div
+            ref={scrollAreaRef}
+            className={`content-scroll-area ${isDragOver ? 'drag-over' : ''}`}
             onMouseDown={handleMouseDownCanvas}
-            onMouseMove={handleMouseMoveCanvas}
-            onMouseUp={handleMouseUpCanvas}
-            onMouseLeave={handleMouseUpCanvas}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setCanvasMenu({ x: e.clientX, y: e.clientY });
-            }}
-            className="flex-1 overflow-y-auto bg-white rounded-[24px] shadow-sm px-4 py-5 sm:px-6 sm:py-8 min-h-[500px] relative select-none pb-28 lg:pb-8"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
           >
+            {/* Interactive Breadcrumbs Bar */}
+            <div className="breadcrumbs-bar">
+              {breadcrumbs.map((crumb, idx) => {
+                const isLast = idx === breadcrumbs.length - 1;
+                return (
+                  <React.Fragment key={crumb.path}>
+                    <div
+                      className={`breadcrumb-crumb ${isLast ? 'active' : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigateToFolder(crumb.path);
+                      }}
+                      onDragOver={(e) => {
+                        if (draggedItem && draggedItem.relPath !== crumb.path) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDragOverTarget(crumb.path || 'root');
+                        }
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (dragOverTarget === (crumb.path || 'root')) setDragOverTarget(null);
+                      }}
+                      onDrop={async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setDragOverTarget(null);
+                        if (!draggedItem || draggedItem.relPath === crumb.path) return;
 
-            {/* Folder Path Breadcrumbs Header */}
-            <div className="mb-6 select-none">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1
-                  className={`text-2xl font-bold text-gray-900 ${folderSubpath ? "cursor-pointer hover:text-blue-600 transition" : ""
-                    }`}
-                  onClick={() => {
-                    setFolderSubpath("");
-                    setCurrentFolder(null);
-                  }}
-                >
-                  {navLabels[active]}
-                </h1>
+                        const targets = selectedPaths.has(draggedItem.relPath)
+                          ? files.filter((f) => selectedPaths.has(f.relPath))
+                          : [draggedItem];
 
-                {folderSubpath &&
-                  folderSubpath.split("/").map((part, index, arr) => {
-                    const partialSubpath = arr.slice(0, index + 1).join("/");
-                    const isLast = index === arr.length - 1;
-                    return (
-                      <div key={partialSubpath} className="flex items-center gap-2">
-                        <ChevronRight className="h-5 w-5 text-gray-400 mt-1" />
-                        <h1
-                          onClick={() => {
-                            if (!isLast) {
-                              setFolderSubpath(partialSubpath);
-                            }
-                          }}
-                          className={`text-2xl font-bold ${isLast
-                              ? "text-gray-900"
-                              : "text-gray-500 hover:text-blue-600 cursor-pointer transition"
-                            }`}
-                        >
-                          {part}
-                        </h1>
-                      </div>
-                    );
-                  })}
-              </div>
+                        for (const target of targets) {
+                          const targetRelPath = crumb.path ? `${crumb.path}/${target.name}` : target.name;
+                          await moveItem(target.relPath, targetRelPath);
+                        }
+
+                        addToast('success', `Moved ${targets.length} item(s) to ${crumb.name}`);
+                        refreshFiles();
+                        refreshStorage();
+                        refreshActivities();
+                        setDraggedItem(null);
+                      }}
+                    >
+                      {idx === 0 && <Home size={14} />}
+                      <span>{crumb.name}</span>
+                    </div>
+                    {!isLast && (
+                      <span className="breadcrumb-sep">
+                        <ChevronRight size={14} />
+                      </span>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </div>
 
-            {/* Files Grid/List */}
-            <section>
-              {browserItems.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-24 text-center select-none animate-in fade-in duration-300">
-                  <div className="flex h-24 w-24 items-center justify-center rounded-3xl bg-blue-50 text-blue-500 mb-4 shadow-sm border border-blue-100/60">
-                    <FolderOpen className="h-12 w-12 text-blue-600" />
+            {/* Title Bar with Empty Trash button */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <h1 className="page-title" style={{ margin: 0 }}>
+                {activeTab === 'trash'
+                  ? 'Trash'
+                  : isStarredTab
+                  ? 'Starred'
+                  : activeTab === 'recent'
+                  ? 'Recent'
+                  : activeTab === 'shared'
+                  ? 'Shared with me'
+                  : currentPath
+                  ? currentPath.split('/').pop()
+                  : 'My Drive'}
+              </h1>
+              {activeTab === 'trash' && trashItems.length > 0 && (
+                <button
+                  className="btn btn-danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEmptyTrashConfirm(true);
+                  }}
+                  style={{ borderRadius: 'var(--r-full)' }}
+                >
+                  <Trash2 size={15} />
+                  <span>Empty Trash</span>
+                </button>
+              )}
+            </div>
+
+            {/* ── TRASH VIEW ── */}
+            {activeTab === 'trash' ? (
+              trashItems.length === 0 && !loadingTrash ? (
+                <div className="empty-folder-box">
+                  <div className="empty-folder-icon-wrap">
+                    <Trash2 size={36} strokeWidth={1.75} />
                   </div>
-                  <h3 className="text-xl font-bold text-gray-800">Empty folder</h3>
-                  <p className="mt-1.5 text-sm text-gray-500 max-w-sm">
-                    Drop files here or click <span className="font-semibold text-blue-600">+ New</span> above to upload items to this folder.
+                  <h3 className="empty-folder-title">Trash is empty</h3>
+                  <p className="empty-folder-subtitle">
+                    Items moved to trash will appear here and can be restored or permanently deleted.
                   </p>
                 </div>
-              ) : view === "list" ? (
-                <div className="overflow-hidden rounded-xl border border-gray-100">
-                  <div className="grid grid-cols-[1fr_auto] sm:grid-cols-[1.5fr_1fr_120px_90px_40px] gap-4 border-b border-gray-100 bg-gray-50/80 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-widest text-gray-400">
-                    <span>Name</span>
-                    <span className="hidden sm:block">Type</span>
-                    <span className="hidden sm:block">Last modified</span>
-                    <span className="hidden sm:block">File size</span>
-                    <span />
-                  </div>
-                  <div className="divide-y divide-gray-50">
-                    {browserItems.map(renderRow)}
-                  </div>
-                </div>
               ) : (
-                <div className="space-y-7">
-                  {/* Top Section: Google Drive style wide Folder cards */}
-                  {folderItems.length > 0 && (
-                    <div>
-                      <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-gray-400 px-1">Folders</h2>
-                      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 min-[1600px]:grid-cols-6">
-                        {folderItems.map(renderFolderCard)}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Bottom Section: File Cards */}
-                  {fileItems.length > 0 && (
-                    <div>
-                      {folderItems.length > 0 && (
-                        <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-gray-400 px-1">Files</h2>
-                      )}
-                      <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 min-[1600px]:grid-cols-8">
-                        {fileItems.map(renderCard)}
-                      </div>
-                    </div>
-                  )}
+                <section>
+                  <div className="section-label">Deleted Items ({trashItems.length})</div>
+                  <div className="files-grid">
+                    {trashItems.map((item) => {
+                      return (
+                        <div key={item.id} className="file-card-tile">
+                          <FileTileBanner file={item} />
+                          <div className="file-tile-info">
+                            <div className="file-tile-title" title={item.name}>
+                              {item.name}
+                            </div>
+                            <div className="file-tile-meta" style={{ marginBottom: 8 }}>
+                              <span>{item.deletedAtStr}</span>
+                              <span>{item.sizeStr}</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, borderTop: '1px solid var(--border-light)', paddingTop: 8 }}>
+                              <button
+                                className="btn btn-ghost"
+                                style={{ flex: 1, padding: '4px 6px', fontSize: 11.5, justifyContent: 'center' }}
+                                onClick={() => handleRestore(item.id, item.name)}
+                                title="Restore to Drive"
+                              >
+                                <RotateCcw size={13} style={{ color: 'var(--primary-blue)' }} />
+                                <span>Restore</span>
+                              </button>
+                              <button
+                                className="btn btn-ghost text-red-500"
+                                style={{ padding: '4px 6px', fontSize: 11.5 }}
+                                onClick={() => handleDeletePermanently(item.id, item.name)}
+                                title="Delete Forever"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )
+            ) : !hasItems && !loadingFiles && !loadingSharedWithMe ? (
+              <div className="empty-folder-box">
+                <div className="empty-folder-icon-wrap">
+                  <Folder size={36} strokeWidth={1.75} />
                 </div>
-              )}
-            </section>
+                <h3 className="empty-folder-title">
+                  {activeTab === 'shared' ? 'No shared files' : 'Empty folder'}
+                </h3>
+                <p className="empty-folder-subtitle">
+                  {activeTab === 'shared'
+                    ? 'Files and folders shared with you by others will appear here.'
+                    : 'Drop files here or click + New above to upload items to this folder.'}
+                </p>
+              </div>
+            ) : viewMode === 'list' ? (
+              /* ── TABLE / LIST VIEW ── */
+              <div className="files-table-container">
+                <table className="files-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '45%' }}>Name</th>
+                      <th style={{ width: '20%' }}>Owner</th>
+                      <th style={{ width: '20%' }}>Last Modified</th>
+                      <th style={{ width: '15%', textAlign: 'right' }}>File Size</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Folders Rows */}
+                    {displayFolders.map((folder) => {
+                      const isSelected = selectedPaths.has(folder.relPath);
+                      return (
+                        <tr
+                          key={folder.relPath}
+                          data-relpath={folder.relPath}
+                          className={`files-table-row ${isSelected ? 'selected' : ''}`}
+                          onClick={(e) => handleItemSelect(folder, e)}
+                          onDoubleClick={() => navigateToFolder(folder.relPath)}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setContextMenu({ x: e.clientX, y: e.clientY, item: folder });
+                            setSelectedItem(folder);
+                          }}
+                        >
+                          <td>
+                            <div className="table-file-name-cell">
+                              <Folder size={18} className="text-amber-500 fill-amber-500/20" />
+                              <span title={folder.name}>{folder.name}</span>
+                            </div>
+                          </td>
+                          <td style={{ color: 'var(--text-sub)' }}>me</td>
+                          <td style={{ color: 'var(--text-sub)' }}>{folder.modifiedStr}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text-sub)' }}>—</td>
+                        </tr>
+                      );
+                    })}
 
-            <div className="h-20 lg:hidden" />
-          </main>
+                    {/* Files Rows */}
+                    {displayFiles.map((file) => {
+                      const isSelected = selectedPaths.has(file.relPath);
+                      return (
+                        <tr
+                          key={file.id || file.relPath}
+                          data-relpath={file.relPath}
+                          className={`files-table-row ${isSelected ? 'selected' : ''}`}
+                          onClick={(e) => handleItemSelect(file, e)}
+                          onDoubleClick={() => handleFileClick(file)}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            setContextMenu({ x: e.clientX, y: e.clientY, item: file });
+                            setSelectedItem(file);
+                          }}
+                        >
+                          <td>
+                            <div className="table-file-name-cell">
+                              {file.kind === 'doc' ? <FileText size={17} className="text-blue-600" /> :
+                               file.kind === 'sheet' ? <FileSpreadsheet size={17} className="text-emerald-600" /> :
+                               file.kind === 'slides' ? <FileText size={17} className="text-amber-600" /> :
+                               file.kind === 'pdf' ? <FileGeneric size={17} className="text-red-500" /> :
+                               file.kind === 'image' ? <ImageIcon size={17} className="text-purple-600" /> :
+                               file.kind === 'video' ? <Film size={17} className="text-rose-600" /> :
+                               <FileGeneric size={17} className="text-slate-500" />}
+                              <span title={file.name}>{file.name}</span>
+                              {starredIds.has(file.relPath) && (
+                                <Star size={13} className="text-amber-400 fill-amber-400" />
+                              )}
+                            </div>
+                          </td>
+                          <td style={{ color: 'var(--text-sub)' }}>me</td>
+                          <td style={{ color: 'var(--text-sub)' }}>{file.modifiedStr}</td>
+                          <td style={{ textAlign: 'right', color: 'var(--text-sub)' }}>{file.sizeStr}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              /* ── GRID VIEW ── */
+              <>
+                {/* Folders Section */}
+                {displayFolders.length > 0 && (
+                  <section style={{ marginBottom: 28 }}>
+                    <div className="section-label">Folders</div>
+                    <div className="folders-grid">
+                      {displayFolders.map((folder) => {
+                        const isSelected = selectedPaths.has(folder.relPath);
+                        const isDragTarget = dragOverTarget === folder.relPath;
+                        const isCurrentlyDragged = draggedItem?.relPath === folder.relPath;
 
-          {/* Marquee Drag Box Selection Rectangle Overlay */}
-          {selectionBox && Math.hypot(selectionBox.currentX - selectionBox.startX, selectionBox.currentY - selectionBox.startY) > 4 && (
-            <div
-              style={{
-                left: `${Math.min(selectionBox.startX, selectionBox.currentX)}px`,
-                top: `${Math.min(selectionBox.startY, selectionBox.currentY)}px`,
-                width: `${Math.abs(selectionBox.currentX - selectionBox.startX)}px`,
-                height: `${Math.abs(selectionBox.currentY - selectionBox.startY)}px`,
-              }}
-              className="fixed pointer-events-none z-50 border-2 border-blue-500 bg-blue-500/20 rounded-xl shadow-lg backdrop-blur-2xs animate-in fade-in-50"
-            />
-          )}
+                        return (
+                          <div
+                            key={folder.relPath}
+                            data-relpath={folder.relPath}
+                            draggable={true}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('text/plain', folder.relPath);
+                              setDraggedItem(folder);
+                            }}
+                            onDragEnd={() => {
+                              setDraggedItem(null);
+                              setDragOverTarget(null);
+                            }}
+                            className={`folder-chip ${isSelected ? 'selected' : ''} ${isDragTarget ? 'drag-target' : ''} ${isCurrentlyDragged ? 'dragging' : ''}`}
+                            onClick={(e) => {
+                              handleItemSelect(folder, e);
+                            }}
+                            onDoubleClick={() => navigateToFolder(folder.relPath)}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setContextMenu({ x: e.clientX, y: e.clientY, item: folder });
+                              setSelectedItem(folder);
+                            }}
+                            onDragOver={(e) => {
+                              if (draggedItem && draggedItem.relPath !== folder.relPath && !folder.relPath.startsWith(draggedItem.relPath + '/')) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDragOverTarget(folder.relPath);
+                              }
+                            }}
+                            onDragLeave={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (dragOverTarget === folder.relPath) setDragOverTarget(null);
+                            }}
+                            onDrop={async (e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDragOverTarget(null);
+                              if (!draggedItem || draggedItem.relPath === folder.relPath) return;
 
-          {/* Right Activity Panel */}
-          <div className={`hidden shrink-0 flex-col bg-white rounded-[24px] shadow-sm transition-all duration-300 ease-in-out lg:flex ${activityPinned ? "w-80 opacity-100" : "w-0 overflow-hidden opacity-0"}`}>
-            {activityPinned && <ActivityFeed open={true} onClose={() => setActivityPinned(false)} desktop activitiesList={activityList} currentUser={currentUser} />}
+                              const targets = selectedPaths.has(draggedItem.relPath)
+                                ? files.filter((f) => selectedPaths.has(f.relPath))
+                                : [draggedItem];
+
+                              for (const target of targets) {
+                                const targetRelPath = `${folder.relPath}/${target.name}`;
+                                await moveItem(target.relPath, targetRelPath);
+                              }
+
+                              addToast('success', `Moved ${targets.length} item(s) into "${folder.name}"`);
+                              refreshFiles();
+                              refreshStorage();
+                              refreshActivities();
+                              setDraggedItem(null);
+                            }}
+                          >
+                            <Folder size={18} className="text-amber-500 fill-amber-500/20" />
+                            <span className="folder-chip-name" title={folder.name}>
+                              {folder.name}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
+
+                {/* Files Section */}
+                {displayFiles.length > 0 && (
+                  <section>
+                    <div className="section-label">Files</div>
+                    <div className="files-grid">
+                      {displayFiles.map((file) => {
+                        const isSelected = selectedPaths.has(file.relPath);
+                        const isCurrentlyDragged = draggedItem?.relPath === file.relPath;
+
+                        return (
+                          <div
+                            key={file.id || file.relPath}
+                            data-relpath={file.relPath}
+                            draggable={true}
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData('text/plain', file.relPath);
+                              setDraggedItem(file);
+                            }}
+                            onDragEnd={() => {
+                              setDraggedItem(null);
+                              setDragOverTarget(null);
+                            }}
+                            className={`file-card-tile ${isSelected ? 'selected' : ''} ${isCurrentlyDragged ? 'dragging' : ''}`}
+                            onClick={(e) => {
+                              handleItemSelect(file, e);
+                            }}
+                            onDoubleClick={() => handleFileClick(file)}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setContextMenu({ x: e.clientX, y: e.clientY, item: file });
+                              setSelectedItem(file);
+                            }}
+                          >
+                            {/* Rich Thumbnail Banner */}
+                            <FileTileBanner file={file} />
+
+                            {/* Lower Card Details */}
+                            <div className="file-tile-info">
+                              <div className="file-tile-title" title={file.name}>
+                                {file.name}
+                              </div>
+                              <div className="file-tile-meta">
+                                <span>{file.modifiedStr}</span>
+                                <span>{file.sizeStr}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
+              </>
+            )}
           </div>
+
+          {/* ── RIGHT DETAILS & ACTIVITY SIDEBAR ── */}
+          {showActivity && (
+            <aside className="activity-sidebar">
+              {/* Dual Tabs Header */}
+              <div className="activity-tabs-header">
+                <button
+                  className={`activity-tab-btn ${activityTab === 'details' ? 'active' : ''}`}
+                  onClick={() => setActivityTab('details')}
+                >
+                  <Info size={14} />
+                  <span>Details</span>
+                </button>
+                <button
+                  className={`activity-tab-btn ${activityTab === 'activity' ? 'active' : ''}`}
+                  onClick={() => {
+                    setActivityTab('activity');
+                    refreshActivities();
+                  }}
+                >
+                  <Activity size={14} />
+                  <span>Activity</span>
+                </button>
+              </div>
+
+              {/* Tab Contents */}
+              <div className="activity-tab-content">
+                {activityTab === 'details' ? (
+                  selectedItem ? (
+                    <div className="details-panel">
+                      <div className="details-preview-card">
+                        <FileTileBanner file={selectedItem} />
+                      </div>
+
+                      <div>
+                        <div className="details-item-name">{selectedItem.name}</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--text-sub)', marginTop: 4 }}>
+                          {selectedItem.isDir ? 'Folder' : selectedItem.kind.toUpperCase()}
+                        </div>
+                      </div>
+
+                      {/* Quick Action Grid */}
+                      <div className="details-actions-grid">
+                        {!selectedItem.isDir && (
+                          <button
+                            className="details-action-btn"
+                            onClick={() => handleFileClick(selectedItem)}
+                          >
+                            <Eye size={14} />
+                            <span>Preview</span>
+                          </button>
+                        )}
+
+                        <button
+                          className="details-action-btn"
+                          onClick={() => handleOpenShareModal(selectedItem)}
+                        >
+                          <Share2 size={14} />
+                          <span>Share</span>
+                        </button>
+
+                        <button
+                          className="details-action-btn"
+                          onClick={() => setMoveCopyModal({ open: true, mode: 'move', items: [selectedItem], selectedDestPath: '' })}
+                        >
+                          <FolderInput size={14} />
+                          <span>Move</span>
+                        </button>
+
+                        <button
+                          className="details-action-btn"
+                          onClick={() => setMoveCopyModal({ open: true, mode: 'copy', items: [selectedItem], selectedDestPath: '' })}
+                        >
+                          <Copy size={14} />
+                          <span>Copy</span>
+                        </button>
+
+                        {!selectedItem.isDir && (
+                          <button
+                            className="details-action-btn"
+                            onClick={() => downloadFile(selectedItem.relPath, selectedItem.name)}
+                          >
+                            <Download size={14} />
+                            <span>Download</span>
+                          </button>
+                        )}
+
+                        <button
+                          className="details-action-btn"
+                          onClick={() => toggleStar(selectedItem.relPath)}
+                        >
+                          <Star size={14} className={starredIds.has(selectedItem.relPath) ? 'text-amber-500 fill-amber-500' : ''} />
+                          <span>{starredIds.has(selectedItem.relPath) ? 'Starred' : 'Star'}</span>
+                        </button>
+
+                        <button
+                          className="details-action-btn"
+                          style={{ color: 'var(--danger)', gridColumn: 'span 2' }}
+                          onClick={() => setDeleteTargets([selectedItem])}
+                        >
+                          <Trash2 size={14} />
+                          <span>Delete</span>
+                        </button>
+                      </div>
+
+                      {/* Detailed Meta Table */}
+                      <div className="details-meta-table">
+                        <div className="details-meta-row">
+                          <span className="details-meta-label">Type</span>
+                          <span className="details-meta-val">{selectedItem.isDir ? 'File Folder' : selectedItem.mimeType || selectedItem.kind}</span>
+                        </div>
+                        <div className="details-meta-row">
+                          <span className="details-meta-label">Size</span>
+                          <span className="details-meta-val">{selectedItem.sizeStr}</span>
+                        </div>
+                        <div className="details-meta-row">
+                          <span className="details-meta-label">Location</span>
+                          <span className="details-meta-val" title={`/${selectedItem.relPath}`}>/{selectedItem.relPath}</span>
+                        </div>
+                        <div className="details-meta-row">
+                          <span className="details-meta-label">Owner</span>
+                          <span className="details-meta-val">{user.displayName}</span>
+                        </div>
+                        <div className="details-meta-row">
+                          <span className="details-meta-label">Modified</span>
+                          <span className="details-meta-val">{selectedItem.modifiedStr}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="activity-empty">
+                      <HardDrive size={36} className="activity-pulse-icon" />
+                      <p className="activity-empty-text">Select a file or folder to view detailed information and quick actions.</p>
+                    </div>
+                  )
+                ) : (
+                  /* Activity Feed Tab */
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-sub)' }}>Audit Stream</span>
+                      <button
+                        onClick={refreshActivities}
+                        className="btn btn-ghost"
+                        style={{ padding: '4px 6px' }}
+                        title="Refresh Activities"
+                      >
+                        <RefreshCw size={13} className={loadingActivities ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+
+                    {activities.length === 0 && !loadingActivities ? (
+                      <div className="activity-empty">
+                        <Activity size={32} className="activity-pulse-icon" />
+                        <p className="activity-empty-text">No recent activities on your Nextcloud instance.</p>
+                      </div>
+                    ) : (
+                      <div className="activity-timeline">
+                        {activities.map((act) => (
+                          <div key={act.id} className="activity-item">
+                            <div className="activity-icon-badge">
+                              <History size={14} />
+                            </div>
+                            <div className="activity-content">
+                              <div className="activity-subject">{act.subject}</div>
+                              <div className="activity-time">{act.datetimeStr}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </aside>
+          )}
         </div>
       </div>
 
-      {/* Mobile drawer */}
-      <ActivityFeed open={activityOpen} onClose={() => setActivityOpen(false)} activitiesList={activityList} currentUser={currentUser} />
-      <BottomNav active={active} onSelect={selectNav} onUpload={() => setNewOpen(true)} />
+      {/* ── BATCH MULTI-SELECT FLOATING ACTION BAR ── */}
+      {selectedPaths.size > 0 && (
+        <div className="batch-floating-bar">
+          <span className="batch-count">{selectedPaths.size} selected</span>
 
-      {/* Context Menu */}
-      {menu && (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          item={menu.item}
-          onClose={() => setMenu(null)}
-          onRename={(item) => setRenaming(item.id)}
-          onDelete={handleDelete}
-          onToggleStar={handleToggleStar}
-          onOpen={handleOpen}
-          onShare={(item) => setShareItem(item)}
-          onDownload={(item) => {
-            const rel = (item as any).relPath || item.name;
-            const a = document.createElement("a");
-            a.href = getDiskDownloadUrl(rel);
-            a.download = item.name;
-            a.target = "_blank";
-            a.click();
-          }}
-          onMove={(item) => setMoveItem(item)}
-          onUploadIntoFolder={(item) => {
-            setTargetUploadFolder((item as any).relPath || item.name);
-            fileInputRef.current?.click();
-          }}
-          onEdit={(item) => setEditItem(item)}
-        />
-      )}
-
-      {/* Canvas Context Menu (Right-Clicking Empty Space) */}
-      {canvasMenu && (
-        <CanvasContextMenu
-          x={canvasMenu.x}
-          y={canvasMenu.y}
-          onClose={() => setCanvasMenu(null)}
-          onUpload={() => {
-            setTargetUploadFolder(null);
-            fileInputRef.current?.click();
-          }}
-          onCreateFolder={createFolder}
-          onCreateDoc={() => createFile("doc", "Untitled document.docx", "1 KB")}
-          onCreateSheet={() => createFile("sheet", "Untitled spreadsheet.xlsx", "1 KB")}
-          onCreateSlides={() => createFile("slides", "Untitled presentation.pptx", "1 KB")}
-        />
-      )}
-
-      {/* Upload Progress Bar Widget */}
-      {uploadState && (
-        <UploadProgressWidget
-          fileName={uploadState.fileName}
-          count={uploadState.count}
-          progress={uploadState.progress}
-          completed={uploadState.completed}
-          error={uploadState.error}
-          onClose={() => setUploadState(null)}
-        />
-      )}
-      {previewItem && (
-        <FilePreviewModal
-          item={previewItem}
-          itemsList={browserItems}
-          onClose={() => setPreviewItem(null)}
-          onNavigate={(nextItem) => setPreviewItem(nextItem)}
-          onEdit={(itemToEdit) => {
-            setPreviewItem(null);
-            setEditItem(itemToEdit);
-          }}
-        />
-      )}
-
-      {/* Smart Web Office Suite Editors */}
-      {editItem && (
-        editItem.kind === "sheet" || editItem.name.endsWith(".xlsx") || editItem.name.endsWith(".csv") ? (
-          <SheetEditorModal
-            item={editItem}
-            onClose={() => setEditItem(null)}
-            onSaved={() => refreshFromDisk(folderSubpath)}
-          />
-        ) : editItem.kind === "pdf" || editItem.name.endsWith(".pdf") ? (
-          <PdfEditorModal
-            item={editItem}
-            onClose={() => setEditItem(null)}
-            onSaved={() => refreshFromDisk(folderSubpath)}
-          />
-        ) : editItem.kind === "doc" || editItem.name.endsWith(".docx") || editItem.name.endsWith(".doc") || editItem.name.endsWith(".md") || editItem.name.endsWith(".txt") ? (
-          <DocEditorModal
-            item={editItem}
-            onClose={() => setEditItem(null)}
-            onSaved={() => refreshFromDisk(folderSubpath)}
-          />
-        ) : (
-          <FileEditorModal
-            item={editItem}
-            onClose={() => setEditItem(null)}
-            onSaved={() => refreshFromDisk(folderSubpath)}
-          />
-        )
-      )}
-
-      {/* Move Modal */}
-      {moveItem && (
-        <MoveModal
-          item={moveItem}
-          onClose={() => setMoveItem(null)}
-          onMoved={() => refreshFromDisk(folderSubpath)}
-        />
-      )}
-
-      {/* Share Link Modal */}
-      {shareItem && (
-        <ShareModal item={shareItem} onClose={() => setShareItem(null)} />
-      )}
-
-      {/* Admin Invite Modal */}
-      {adminModalOpen && (
-        <AdminUserModal currentUser={currentUser} onClose={() => setAdminModalOpen(false)} />
-      )}
-
-      {/* User Profile Modal */}
-      {profileModalOpen && (
-        <UserProfileModal
-          user={currentUser}
-          onClose={() => setProfileModalOpen(false)}
-          onUpdateUser={async (updatedUser) => {
-            // CRITICAL: always preserve the existing folderId — name/email changes must NEVER move the folder
-            const safeUpdatedUser = {
-              ...updatedUser,
-              folderId: currentUser?.folderId || updatedUser.folderId,
-            };
-            setCurrentUser(safeUpdatedUser);
-            localStorage.setItem("govind_drive_user", JSON.stringify(safeUpdatedUser));
-            try {
-              if (pb.authStore.record?.id) {
-                await pb.collection('users').update(pb.authStore.record.id, {
-                  name: updatedUser.name,
-                  avatar: updatedUser.avatar,
-                });
+          <button
+            className="batch-btn"
+            onClick={() => {
+              const targets = files.filter((f) => selectedPaths.has(f.relPath));
+              if (targets.length > 0) {
+                setMoveCopyModal({ open: true, mode: 'move', items: targets, selectedDestPath: '' });
               }
-            } catch (err) {
-              console.warn('PocketBase server user update:', err);
-            }
-          }}
-        />
+            }}
+            title="Move Selected"
+          >
+            <FolderInput size={14} />
+            <span>Move</span>
+          </button>
+
+          <button
+            className="batch-btn"
+            onClick={() => {
+              const targets = files.filter((f) => selectedPaths.has(f.relPath));
+              if (targets.length > 0) {
+                setMoveCopyModal({ open: true, mode: 'copy', items: targets, selectedDestPath: '' });
+              }
+            }}
+            title="Copy Selected"
+          >
+            <Copy size={14} />
+            <span>Copy</span>
+          </button>
+
+          <button className="batch-btn" onClick={handleBatchDownload} title="Download Selected">
+            <Download size={14} />
+            <span>Download</span>
+          </button>
+
+          <button className="batch-btn" onClick={handleBatchStar} title="Star Selected">
+            <Star size={14} />
+            <span>Star</span>
+          </button>
+
+          {selectedPaths.size === 1 && (
+            <button
+              className="batch-btn"
+              onClick={() => {
+                const target = files.find((f) => selectedPaths.has(f.relPath));
+                if (target) handleOpenShareModal(target);
+              }}
+              title="Share Selected"
+            >
+              <Share2 size={14} />
+              <span>Share</span>
+            </button>
+          )}
+
+          <button className="batch-btn danger" onClick={handleBatchDelete} title="Delete Selected">
+            <Trash2 size={14} />
+            <span>Delete</span>
+          </button>
+
+          <button className="batch-btn" onClick={() => setSelectedPaths(new Set())} title="Deselect All">
+            <X size={14} />
+          </button>
+        </div>
       )}
 
-      {/* New menu */}
-      {newOpen && (
-        <div className="fixed inset-0 z-40" onClick={() => setNewOpen(false)}>
-          <div className="absolute left-4 top-16 z-50 w-56 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xl shadow-gray-300/40 lg:left-64 lg:top-16"
-            onClick={(e) => e.stopPropagation()}>
-            {newFileOptions.map(({ icon: Icon, label, kind, name, size }) => (
-              <button key={label}
+      {/* ── CONTEXT MENU ── */}
+      {contextMenu && (
+        <div
+          className="ctx-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {contextMenu.item.isDir ? (
+            <button
+              className="ctx-item"
+              onClick={() => {
+                navigateToFolder(contextMenu.item.relPath);
+                setContextMenu(null);
+              }}
+            >
+              <Folder size={15} />
+              <span>Open Folder</span>
+            </button>
+          ) : (
+            <>
+              <button
+                className="ctx-item brand"
                 onClick={() => {
-                  if (label === "Upload files") {
-                    fileInputRef.current?.click();
-                    setNewOpen(false);
-                    return;
-                  }
-                  if (label === "Upload folder") {
-                    folderInputRef.current?.click();
-                    setNewOpen(false);
-                    return;
-                  }
-                  if (label === "New folder") createFolder(); else createFile(kind, name, size);
+                  openInOnlyOffice(contextMenu.item);
+                  setContextMenu(null);
                 }}
-                className="flex w-full items-center gap-3 px-4 py-3 text-sm text-gray-700 transition-colors hover:bg-blue-50 hover:text-blue-700">
-                <Icon className="h-4 w-4 text-gray-400" />
-                {label}
+              >
+                <ExternalLink size={15} />
+                <span>Edit in OnlyOffice</span>
               </button>
-            ))}
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  handleFileClick(contextMenu.item);
+                  setContextMenu(null);
+                }}
+              >
+                <Eye size={15} />
+                <span>Preview</span>
+              </button>
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  downloadFile(contextMenu.item.relPath, contextMenu.item.name);
+                  setContextMenu(null);
+                }}
+              >
+                <Download size={15} />
+                <span>Download</span>
+              </button>
+            </>
+          )}
+
+          <button
+            className="ctx-item"
+            onClick={() => {
+              handleOpenShareModal(contextMenu.item);
+              setContextMenu(null);
+            }}
+          >
+            <Share2 size={15} />
+            <span>Share...</span>
+          </button>
+
+          <button
+            className="ctx-item"
+            onClick={() => {
+              setMoveCopyModal({ open: true, mode: 'move', items: [contextMenu.item], selectedDestPath: '' });
+              setContextMenu(null);
+            }}
+          >
+            <FolderInput size={15} />
+            <span>Move to...</span>
+          </button>
+
+          <button
+            className="ctx-item"
+            onClick={() => {
+              setMoveCopyModal({ open: true, mode: 'copy', items: [contextMenu.item], selectedDestPath: '' });
+              setContextMenu(null);
+            }}
+          >
+            <Copy size={15} />
+            <span>Copy to...</span>
+          </button>
+
+          <button
+            className="ctx-item"
+            onClick={() => {
+              toggleStar(contextMenu.item.relPath);
+              setContextMenu(null);
+            }}
+          >
+            <Star size={15} />
+            <span>{starredIds.has(contextMenu.item.relPath) ? 'Remove Star' : 'Add Star'}</span>
+          </button>
+
+          <button
+            className="ctx-item"
+            onClick={() => {
+              setRenameTarget(contextMenu.item);
+              setRenameValue(contextMenu.item.name);
+              setContextMenu(null);
+            }}
+          >
+            <Edit2 size={15} />
+            <span>Rename</span>
+          </button>
+
+          <div className="ctx-sep" />
+
+          <button
+            className="ctx-item danger"
+            onClick={() => {
+              setDeleteTargets([contextMenu.item]);
+              setContextMenu(null);
+            }}
+          >
+            <Trash2 size={15} />
+            <span>Delete</span>
+          </button>
+        </div>
+      )}
+
+      {/* ── MODAL: MOVE / COPY DESTINATION PICKER ── */}
+      {moveCopyModal && (
+        <div className="overlay" onClick={() => setMoveCopyModal(null)}>
+          <div className="modal" style={{ width: 440 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              {moveCopyModal.mode === 'move' ? 'Move' : 'Copy'} {moveCopyModal.items.length === 1 ? `"${moveCopyModal.items[0].name}"` : `${moveCopyModal.items.length} items`} to...
+            </div>
+            <div className="modal-body">
+              <div style={{ fontSize: 12, color: 'var(--text-sub)', marginBottom: 6 }}>
+                Select destination folder:
+              </div>
+              <div className="folder-picker-list">
+                <button
+                  className={`folder-picker-item ${moveCopyModal.selectedDestPath === '' ? 'active' : ''}`}
+                  onClick={() => setMoveCopyModal({ ...moveCopyModal, selectedDestPath: '' })}
+                >
+                  <Home size={15} />
+                  <span>My Drive (Root)</span>
+                </button>
+                {displayFolders.map((f) => (
+                  <button
+                    key={f.relPath}
+                    className={`folder-picker-item ${moveCopyModal.selectedDestPath === f.relPath ? 'active' : ''}`}
+                    onClick={() => setMoveCopyModal({ ...moveCopyModal, selectedDestPath: f.relPath })}
+                  >
+                    <Folder size={15} className="text-amber-500" />
+                    <span>{f.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={() => setMoveCopyModal(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleExecuteMoveCopy}>
+                {moveCopyModal.mode === 'move' ? 'Move Here' : 'Copy Here'}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Batch Actions Floating Toolbar */}
-      <BatchActionBar
-        selectedCount={selectedIds.size}
-        totalCount={browserItems.length}
-        allSelected={selectedIds.size === browserItems.length && browserItems.length > 0}
-        onToggleSelectAll={handleSelectAll}
-        onBatchStar={handleBatchStar}
-        onBatchDownload={handleBatchDownload}
-        onBatchMove={handleBatchMove}
-        onBatchDelete={handleBatchDelete}
-        onClearSelection={handleClearSelection}
-      />
+      {/* ── MODAL: ADMIN USER MANAGEMENT (PHASE 4.7) ── */}
+      {adminUsersModalOpen && (
+        <div className="overlay" onClick={() => setAdminUsersModalOpen(false)}>
+          <div className="modal" style={{ width: 540, maxWidth: '95vw' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Shield size={18} className="text-blue-600" />
+                <span>Nextcloud User Management</span>
+              </div>
+              <button className="btn btn-ghost" onClick={() => setAdminUsersModalOpen(false)}>
+                <X size={16} />
+              </button>
+            </div>
 
-      {/* Storage Analytics Manager Modal */}
-      {storageModalOpen && (
-        <StorageAnalyticsModal
-          items={items}
-          user={currentUser}
-          onClose={() => setStorageModalOpen(false)}
-          onDeleteFile={(file) => handleDelete(file)}
-          onClearTrash={() => {
-            setItems((prev) => prev.filter((i) => i.parentId !== 'trash'));
-          }}
-        />
+            <div className="modal-body">
+              {/* Create User Box */}
+              <form onSubmit={handleCreateAdminUser} style={{ background: 'var(--border-light)', padding: 14, borderRadius: 'var(--r-md)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)' }}>Create New Nextcloud User</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Username"
+                    value={newAdminUserId}
+                    onChange={(e) => setNewAdminUserId(e.target.value)}
+                  />
+                  <input
+                    type="password"
+                    required
+                    placeholder="Password"
+                    value={newAdminUserPass}
+                    onChange={(e) => setNewAdminUserPass(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="text"
+                    placeholder="Display Name (e.g. John Doe)"
+                    value={newAdminUserDisplay}
+                    onChange={(e) => setNewAdminUserDisplay(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button type="submit" className="btn btn-primary">
+                    <UserPlus size={14} />
+                    <span>Create User</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Users List */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-sub)', marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Existing Users ({adminUsersList.length})</span>
+                  <button className="btn btn-ghost" onClick={refreshAdminUsers} style={{ padding: '2px 6px' }}>
+                    <RefreshCw size={12} className={loadingAdminUsers ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+
+                <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {adminUsersList.map((u) => (
+                    <div
+                      key={u.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 12px',
+                        background: 'var(--surface)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--r-sm)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <UserAvatar username={u.id} displayName={u.displayName || u.id} size={28} />
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)' }}>{u.displayName || u.id}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-sub)' }}>@{u.id}</div>
+                        </div>
+                      </div>
+                      {u.id !== user?.username && (
+                        <button
+                          className="btn btn-ghost text-red-500"
+                          onClick={() => handleDeleteAdminUser(u.id)}
+                          style={{ padding: '4px 6px' }}
+                          title="Delete User"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: SHARE (PUBLIC LINK & USER SHARING) ── */}
+      {shareModal.open && shareModal.item && (
+        <div className="overlay" onClick={() => setShareModal((p) => ({ ...p, open: false }))}>
+          <div className="modal share-modal-container" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Share2 size={18} className="text-blue-600" />
+                <span>Share "{shareModal.item.name}"</span>
+              </div>
+              <button className="btn btn-ghost" onClick={() => setShareModal((p) => ({ ...p, open: false }))}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {/* Public Link Generator Box */}
+              <div className="share-public-box">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)' }}>Public Web Link</div>
+                  <span style={{ fontSize: 11, color: 'var(--text-sub)' }}>Anyone with link</span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 10 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, color: 'var(--text-sub)', marginBottom: 4 }}>Password (Optional)</label>
+                    <input
+                      type="password"
+                      placeholder="Protect with password"
+                      value={sharePassword}
+                      onChange={(e) => setSharePassword(e.target.value)}
+                      style={{ fontSize: 12, padding: '6px 10px' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, color: 'var(--text-sub)', marginBottom: 4 }}>Expiry Date</label>
+                    <input
+                      type="date"
+                      value={shareExpireDate}
+                      onChange={(e) => setShareExpireDate(e.target.value)}
+                      style={{ fontSize: 12, padding: '6px 10px' }}
+                    />
+                  </div>
+                </div>
+
+                <button
+                  className="btn btn-primary"
+                  onClick={handleCreatePublicShareLink}
+                  disabled={creatingShare}
+                  style={{ marginTop: 12, width: '100%', justifyContent: 'center', padding: '7px 0' }}
+                >
+                  <Plus size={14} />
+                  <span>{creatingShare ? 'Creating Link...' : 'Create Public Share Link'}</span>
+                </button>
+              </div>
+
+              {/* Share With Specific Nextcloud User */}
+              <form onSubmit={handleCreateUserShareSubmit}>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-main)', marginBottom: 6 }}>
+                  Share with Nextcloud User / Group
+                </label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    type="text"
+                    placeholder="Enter username (e.g. govindvaghasia)"
+                    value={shareWithUser}
+                    onChange={(e) => setShareWithUser(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button type="submit" className="btn btn-primary">
+                    <UserPlus size={14} />
+                    <span>Share</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Active Shares List */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-sub)', marginTop: 8, marginBottom: 6 }}>
+                  Active Shares ({shareModal.shares.length})
+                </div>
+                {shareModal.shares.length === 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-sub)', fontStyle: 'italic', padding: '6px 0' }}>
+                    No active share links for this item yet.
+                  </div>
+                ) : (
+                  <div className="share-active-list">
+                    {shareModal.shares.map((s) => (
+                      <div key={s.id} className="share-active-item">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            {s.shareType === 3 ? <Globe size={13} className="text-blue-600" /> : <UserIcon size={13} className="text-indigo-600" />}
+                            <span>{s.shareType === 3 ? 'Public Link' : s.shareWithDisplayname || s.shareWith}</span>
+                            {s.hasPassword && <span title="Password protected"><Lock size={11} className="text-amber-500" /></span>}
+                          </div>
+                          {s.url && (
+                            <div style={{ fontSize: 11, color: 'var(--text-sub)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {s.url}
+                            </div>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {s.url && (
+                            <button
+                              className="btn btn-ghost"
+                              onClick={() => handleCopyShareLink(s.url!, s.id)}
+                              style={{ padding: '4px 8px', fontSize: 11.5 }}
+                              title="Copy Share Link"
+                            >
+                              {copiedShareId === s.id ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                              <span>{copiedShareId === s.id ? 'Copied' : 'Copy'}</span>
+                            </button>
+                          )}
+                          <button
+                            className="btn btn-ghost text-red-500"
+                            onClick={() => handleDeleteShareItem(s.id)}
+                            style={{ padding: '4px 6px' }}
+                            title="Revoke Share"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: CREATE NEW FOLDER ── */}
+      {newFolderModalOpen && (
+        <div className="overlay" onClick={() => setNewFolderModalOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">New Folder</div>
+            <form onSubmit={handleCreateFolder}>
+              <div className="modal-body">
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  placeholder="Folder name"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                />
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-ghost" onClick={() => setNewFolderModalOpen(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary">
+                  Create Folder
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: CREATE DOCUMENT / SHEET / SLIDES ── */}
+      {newDocModal.open && (
+        <div className="overlay" onClick={() => setNewDocModal((p) => ({ ...p, open: false }))}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">{newDocModal.title}</div>
+            <form onSubmit={handleCreateDocSubmit}>
+              <div className="modal-body">
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-sub)', marginBottom: 6 }}>Document Name</label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    autoFocus
+                    required
+                    value={newDocName}
+                    onChange={(e) => setNewDocName(e.target.value)}
+                    placeholder="Enter name"
+                  />
+                  <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-sub)', fontSize: 13 }}>
+                    {newDocModal.ext}
+                  </span>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-ghost" onClick={() => setNewDocModal((p) => ({ ...p, open: false }))}>
+                  Cancel
+                </button>
+                <button type="submit" disabled={creatingDoc} className="btn btn-primary">
+                  {creatingDoc ? 'Creating...' : 'Create & Edit'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: RENAME ── */}
+      {renameTarget && (
+        <div className="overlay" onClick={() => setRenameTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">Rename Item</div>
+            <form onSubmit={handleRenameSubmit}>
+              <div className="modal-body">
+                <input
+                  type="text"
+                  autoFocus
+                  required
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                />
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-ghost" onClick={() => setRenameTarget(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary">
+                  Save
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: DELETE ── */}
+      {deleteTargets.length > 0 && (
+        <div className="overlay" onClick={() => setDeleteTargets([])}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">Delete Item(s)</div>
+            <div className="modal-body" style={{ color: 'var(--text-muted)' }}>
+              Are you sure you want to move {deleteTargets.length === 1 ? `"${deleteTargets[0].name}"` : `${deleteTargets.length} items`} to the trashbin?
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setDeleteTargets([])}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-danger" onClick={handleDeleteConfirm}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: EMPTY TRASH CONFIRMATION ── */}
+      {emptyTrashConfirm && (
+        <div className="overlay" onClick={() => setEmptyTrashConfirm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">Empty Trash?</div>
+            <div className="modal-body" style={{ color: 'var(--text-muted)' }}>
+              All {trashItems.length} items in the trash will be permanently deleted. This action cannot be undone.
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-ghost" onClick={() => setEmptyTrashConfirm(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-danger" onClick={handleEmptyTrash}>
+                Empty Trash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: FILE PREVIEW (MEDIA / PDF) ── */}
+      {previewTarget && (
+        <div className="overlay" onClick={closePreview}>
+          <div className="modal" style={{ maxWidth: 800, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{previewTarget.name}</span>
+              <button className="btn btn-ghost" onClick={closePreview}><X size={18} /></button>
+            </div>
+            <div className="modal-body" style={{ flex: 1, overflow: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 280 }}>
+              {previewLoading ? (
+                <RefreshCw size={28} className="animate-spin text-blue-600" />
+              ) : previewTarget.kind === 'image' && previewBlobUrl ? (
+                <img src={previewBlobUrl} alt={previewTarget.name} style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain', borderRadius: 8 }} />
+              ) : previewTarget.kind === 'video' && previewBlobUrl ? (
+                <video src={previewBlobUrl} controls autoPlay style={{ maxWidth: '100%', maxHeight: '60vh', borderRadius: 8 }} />
+              ) : previewTarget.kind === 'pdf' && previewBlobUrl ? (
+                <iframe src={previewBlobUrl} title={previewTarget.name} style={{ width: '100%', height: '65vh', border: 'none' }} />
+              ) : (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>{previewTarget.name}</div>
+                  <button className="btn btn-primary" onClick={() => downloadFile(previewTarget.relPath, previewTarget.name)}>
+                    <Download size={15} />
+                    <span>Download File</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ONLYOFFICE EMBEDDED FULL-SCREEN EDITOR MODAL ── */}
+      {onlyOfficeModal && (
+        <div className="onlyoffice-overlay">
+          <div className="onlyoffice-header">
+            <div className="onlyoffice-title-wrap">
+              <img src="/Govind Drive Logo Small 2.png" alt="Govind Drive" style={{ height: 26, width: 'auto', objectFit: 'contain' }} />
+              <span className="onlyoffice-title">{onlyOfficeModal.name}</span>
+              <span className="onlyoffice-badge">OnlyOffice Docs CE</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Check size={14} className="text-emerald-600" />
+                Saved to 4TB NVMe
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                className="btn btn-ghost"
+                onClick={() => window.open(`${NC_HOST}${onlyOfficeModal.url}`, '_blank')}
+                title="Open in Full Tab"
+              >
+                <ExternalLink size={15} />
+                <span>Open in Tab</span>
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => downloadFile(onlyOfficeModal.item.relPath, onlyOfficeModal.item.name)}
+                title="Download file"
+              >
+                <Download size={15} />
+                <span>Download</span>
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setOnlyOfficeModal(null);
+                  refreshFiles();
+                  refreshActivities();
+                }}
+                style={{ padding: '6px 8px' }}
+                title="Close Editor"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+          <div className="onlyoffice-iframe-container">
+            <iframe
+              src={onlyOfficeModal.url}
+              title={onlyOfficeModal.name}
+              className="onlyoffice-iframe"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── UPLOAD PROGRESS WIDGET ── */}
+      {uploadState && (
+        <div className="upload-widget">
+          <div className="upload-widget-header">
+            <span>{uploadState.uploading ? `Uploading ${uploadState.totalFiles} files...` : 'Upload Complete'}</span>
+            <button onClick={() => setUploadState(null)} style={{ color: '#fff' }}><X size={16} /></button>
+          </div>
+          <div className="upload-item">
+            <div className="upload-item-name">{uploadState.fileName}</div>
+            <div className="upload-bar">
+              <div
+                className="upload-bar-fill"
+                style={{
+                  width: `${uploadState.progress}%`,
+                  background: uploadState.error ? 'var(--danger)' : uploadState.completed ? 'var(--success)' : 'var(--primary-blue)',
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
