@@ -248,6 +248,38 @@ function UserAvatar({
 }
 
 // ---------------------------------------------------------------------------
+// Universal Clipboard Copy Helper (Works on both HTTP and HTTPS)
+// ---------------------------------------------------------------------------
+function copyToClipboard(text: string): boolean {
+  if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).catch(() => {
+      fallbackCopy(text);
+    });
+    return true;
+  }
+  return fallbackCopy(text);
+}
+
+function fallbackCopy(text: string): boolean {
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    textArea.setAttribute('readonly', '');
+    document.body.appendChild(textArea);
+    textArea.select();
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    return successful;
+  } catch (err) {
+    console.warn('Fallback clipboard copy failed:', err);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main Application Component
 // ---------------------------------------------------------------------------
 export default function App() {
@@ -800,9 +832,9 @@ export default function App() {
     if (res.ok && res.share) {
       if (res.share.url) {
         const fullUrl = res.share.url.startsWith('http') ? res.share.url : `${window.location.origin}${res.share.url}`;
-        navigator.clipboard.writeText(fullUrl).catch(() => {});
+        copyToClipboard(fullUrl);
         setCopiedShareId(res.share.id);
-        addToast('success', 'Public share link created and copied to clipboard!');
+        addToast('success', 'Public share link created & copied to clipboard!');
       } else {
         addToast('success', 'Public share link created!');
       }
@@ -852,7 +884,7 @@ export default function App() {
 
   const handleCopyShareLink = (url: string, id: string) => {
     const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
-    navigator.clipboard.writeText(fullUrl);
+    copyToClipboard(fullUrl);
     setCopiedShareId(id);
     addToast('success', 'Share link copied to clipboard!');
     setTimeout(() => setCopiedShareId(null), 3000);
